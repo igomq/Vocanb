@@ -16,7 +16,6 @@ object VocanbBuildDeploy : BuildType({
     vcs {
         root(DslContext.settingsRoot)
         cleanCheckout = true
-        branchFilter = "+:refs/heads/main"
     }
 
     params {
@@ -52,9 +51,7 @@ object VocanbBuildDeploy : BuildType({
     }
 
     triggers {
-        vcs {
-            branchFilter = "+:refs/heads/main"
-        }
+        vcs {}
     }
 
     requirements {
