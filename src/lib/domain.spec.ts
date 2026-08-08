@@ -1,6 +1,7 @@
 import {
 	OcrResponseSchema,
 	createTestSession,
+	normalizeOcrEntry,
 	parseTestRange,
 	summarizeTest,
 	type Word
@@ -82,5 +83,25 @@ describe('results and OCR schema', () => {
 				]
 			})
 		).toHaveProperty('entries.0.meaning', '사과');
+	});
+
+	it('separates part of speech and removes relation notes from OCR meanings', () => {
+		expect(
+			normalizeOcrEntry({
+				sourceOrder: 1,
+				english: 'courteous',
+				meaning: '형 예의 바른, 공손한 (반 discourteous)',
+				uncertain: false
+			})
+		).toMatchObject({ partOfSpeech: '형', meaning: '예의 바른, 공손한' });
+		expect(
+			normalizeOcrEntry({
+				sourceOrder: 2,
+				english: 'polite',
+				meaning: '예의 바른 반 impolite',
+				partOfSpeech: 'adjective',
+				uncertain: false
+			})
+		).toMatchObject({ partOfSpeech: '형', meaning: '예의 바른' });
 	});
 });

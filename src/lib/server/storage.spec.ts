@@ -1,5 +1,12 @@
-import { createVocabulary, getVocabulary, listVocabularies, updateVocabulary } from './storage';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+	createVocabulary,
+	deleteVocabulary,
+	getVocabulary,
+	listVocabularies,
+	uploadDirectory,
+	updateVocabulary
+} from './storage';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -60,5 +67,16 @@ describe('filesystem storage', () => {
 		const path = join(directory, 'users', userId, 'vocabularies', `${vocabulary.id}.json`);
 		await writeFile(path, '{broken', 'utf8');
 		await expect(getVocabulary(userId, vocabulary.id)).rejects.toThrow('읽을 수 없습니다');
+	});
+
+	it('deletes a vocabulary from storage and the user index', async () => {
+		const vocabulary = await createVocabulary(userId, '삭제할 단어장', '');
+		const uploads = uploadDirectory(userId, vocabulary.id);
+		await mkdir(uploads, { recursive: true });
+		await writeFile(join(uploads, 'image.jpg'), 'image');
+		await deleteVocabulary(userId, vocabulary.id);
+		expect(await getVocabulary(userId, vocabulary.id)).toBeNull();
+		expect(await listVocabularies(userId)).toEqual([]);
+		await expect(access(uploads)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 });

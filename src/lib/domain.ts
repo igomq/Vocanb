@@ -10,6 +10,7 @@ export const WordSchema = z
 		number: z.number().int().positive(),
 		english: z.string().trim().min(1).max(300),
 		meaning: z.string().trim().min(1).max(1000),
+		partOfSpeech: z.string().trim().min(1).max(30).optional(),
 		sourceImageId: z.string().uuid(),
 		uncertain: z.boolean().default(false),
 		createdAt: z.string(),
@@ -33,6 +34,7 @@ export const TestItemSchema = z
 		number: z.number().int().positive(),
 		english: z.string(),
 		meaning: z.string(),
+		partOfSpeech: z.string().optional(),
 		result: ResultStatusSchema.optional()
 	})
 	.strict();
@@ -78,12 +80,49 @@ export const OcrEntrySchema = z
 		printedNumber: z.string().nullable().optional(),
 		english: z.string().trim().min(1).max(300),
 		meaning: z.string().trim().min(1).max(1000),
+		partOfSpeech: z.string().trim().max(30).optional(),
 		uncertain: z.boolean()
 	})
 	.strict();
 
 export const OcrResponseSchema = z.object({ entries: z.array(OcrEntrySchema).max(500) }).strict();
 export type OcrResponse = z.infer<typeof OcrResponseSchema>;
+
+const partOfSpeechLabels: Record<string, string> = {
+	n: '명',
+	noun: '명',
+	명사: '명',
+	adj: '형',
+	adjective: '형',
+	형용사: '형',
+	v: '동',
+	verb: '동',
+	동사: '동',
+	adv: '부',
+	adverb: '부',
+	부사: '부'
+};
+const partOfSpeechPrefix =
+	/^\s*(?:\[|\()?(명사|형용사|동사|부사|noun|adjective|verb|adverb|adj|adv|n|v|명|형|동|부)\.?(?:\]|\))?(?:\s+|[:：]\s*)/i;
+const relationNote =
+	/\s*(?:\[|\()\s*(?:유(?:의어)?|반(?:의어)?|syn(?:onym)?|ant(?:onym)?)\s*[:：]?\s*[^)\]]*(?:\]|\))\s*/gi;
+const relationTail =
+	/(?:^|\s)(?:유(?:의어)?|반(?:의어)?|syn(?:onym)?|ant(?:onym)?)\s*[:：]?\s+[a-z][\s\S]*$/i;
+
+export function normalizeOcrEntry(entry: OcrResponse['entries'][number]) {
+	let meaning = entry.meaning;
+	const prefix = meaning.match(partOfSpeechPrefix);
+	if (prefix) meaning = meaning.slice(prefix[0].length);
+	meaning = meaning
+		.replace(relationNote, ' ')
+		.replace(relationTail, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
+	if (!meaning) meaning = entry.meaning.trim();
+	const rawPartOfSpeech = (entry.partOfSpeech || prefix?.[1] || '').replace(/\.$/, '').trim();
+	const partOfSpeech = partOfSpeechLabels[rawPartOfSpeech.toLowerCase()] || rawPartOfSpeech;
+	return { ...entry, meaning, ...(partOfSpeech ? { partOfSpeech } : {}) };
+}
 
 export function parseTestRange(
 	words: Word[],
@@ -125,11 +164,12 @@ export function createTestSession(
 		range,
 		order,
 		direction,
-		items: words.map(({ id, number, english, meaning }) => ({
+		items: words.map(({ id, number, english, meaning, partOfSpeech }) => ({
 			wordId: id,
 			number,
 			english,
-			meaning
+			meaning,
+			...(partOfSpeech ? { partOfSpeech } : {})
 		}))
 	};
 }

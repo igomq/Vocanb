@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { type ResultStatus, type Word } from '$lib/domain';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	let { data, form } = $props();
 	let filter = $state<'all' | ResultStatus>('all');
@@ -10,15 +11,20 @@
 	let testDialog: HTMLDialogElement | undefined = $state();
 	let editDialog: HTMLDialogElement | undefined = $state();
 	let leaveDialog: HTMLDialogElement | undefined = $state();
+	let uploadDialog: HTMLDialogElement | undefined = $state();
 	let uploadForm: HTMLFormElement | undefined = $state();
 	let photoInput: HTMLInputElement | undefined = $state();
 	let editingWord = $state<Word | null>(null);
 	let editEnglish = $state('');
 	let editMeaning = $state('');
 	let uploadPending = $state(false);
+	let uploadFileCount = $state(0);
 	let startPending = $state(false);
 	let editPending = $state(false);
 	let deletePending = $state(false);
+	let bulkDeletePending = $state(false);
+	let selectionMode = $state(false);
+	let selectedWordIds = new SvelteSet<string>();
 
 	$effect(() => {
 		if (editingWord && editDialog && !editDialog.open) editDialog.showModal();
@@ -58,12 +64,24 @@
 		if (photoInput?.files?.length) uploadForm?.requestSubmit();
 	}
 
-	const enhanceUpload: SubmitFunction = () => {
+	function warnBeforeUnload(event: BeforeUnloadEvent) {
+		if (!uploadPending) return;
+		event.preventDefault();
+		event.returnValue = '';
+	}
+
+	const enhanceUpload: SubmitFunction = ({ formData }) => {
 		uploadPending = true;
+		uploadFileCount = formData.getAll('images').length;
+		uploadDialog?.showModal();
 		return async ({ update }) => {
-			await update();
-			uploadPending = false;
-			if (photoInput) photoInput.value = '';
+			try {
+				await update();
+			} finally {
+				uploadPending = false;
+				if (uploadDialog?.open) uploadDialog.close();
+				if (photoInput) photoInput.value = '';
+			}
 		};
 	};
 
@@ -104,6 +122,38 @@
 		};
 	};
 
+	const enhanceDeleteWords: SubmitFunction = () => {
+		bulkDeletePending = true;
+		return async ({ update, result }) => {
+			await update();
+			bulkDeletePending = false;
+			if (result.type === 'success') closeSelection();
+		};
+	};
+
+	function closeSelection() {
+		selectionMode = false;
+		selectedWordIds.clear();
+	}
+
+	function toggleWordSelection(event: Event, wordId: string) {
+		if ((event.currentTarget as HTMLInputElement).checked) selectedWordIds.add(wordId);
+		else selectedWordIds.delete(wordId);
+	}
+
+	function toggleAllFiltered() {
+		const allSelected = filteredWords.every((word) => selectedWordIds.has(word.id));
+		for (const word of filteredWords) {
+			if (allSelected) selectedWordIds.delete(word.id);
+			else selectedWordIds.add(word.id);
+		}
+	}
+
+	function confirmDeleteWords(event: SubmitEvent) {
+		if (!window.confirm(`선택한 ${selectedWordIds.size}개 단어를 삭제할까요?`))
+			event.preventDefault();
+	}
+
 	function confirmDelete(event: SubmitEvent) {
 		if (!window.confirm('이 단어를 삭제할까요?')) event.preventDefault();
 	}
@@ -114,6 +164,8 @@
 		(image.nextElementSibling as HTMLElement | null)?.removeAttribute('hidden');
 	}
 </script>
+
+<svelte:window onbeforeunload={warnBeforeUnload} />
 
 <svelte:head>
 	<title>{data.vocabulary.title} · Vocanb</title>
@@ -157,7 +209,7 @@
 		</p>
 	{/if}
 
-	<div class="word-toolbar">
+	<div class:selection-mode={selectionMode} class="word-toolbar">
 		<div class="word-toolbar-left">
 			<button
 				class="title-link"
@@ -168,40 +220,61 @@
 			<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
 		</div>
 		<div class="word-toolbar-right">
-			<form
-				bind:this={uploadForm}
-				method="post"
-				action="?/upload"
-				enctype="multipart/form-data"
-				use:enhance={enhanceUpload}
-			>
-				<input
-					bind:this={photoInput}
-					class="visually-hidden"
-					id="photo-upload"
-					name="images"
-					type="file"
-					accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-					multiple
-					onchange={submitPhotoUpload}
-				/>
-				<button
-					class="icon-button"
-					type="button"
-					aria-label="단어 사진 추가"
-					title="단어 사진 추가"
-					onclick={openPhotoPicker}
-					disabled={uploadPending}
+			{#if selectionMode}
+				<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
+					>전체 선택</button
 				>
-					{uploadPending ? '…' : '＋'}
-				</button>
-			</form>
-			<button
-				class="button button-secondary"
-				type="button"
-				disabled={!data.vocabulary.words.length}
-				onclick={openTestSettings}>테스트</button
-			>
+				<button
+					class="button button-danger"
+					type="submit"
+					form="bulk-delete-form"
+					disabled={!selectedWordIds.size || bulkDeletePending}
+					>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
+				>
+				<button class="button button-secondary" type="button" onclick={closeSelection}>취소</button>
+			{:else}
+				<form
+					bind:this={uploadForm}
+					method="post"
+					action="?/upload"
+					enctype="multipart/form-data"
+					use:enhance={enhanceUpload}
+				>
+					<input
+						bind:this={photoInput}
+						class="visually-hidden"
+						id="photo-upload"
+						name="images"
+						type="file"
+						accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+						multiple
+						onchange={submitPhotoUpload}
+					/>
+					<button
+						class="icon-button"
+						type="button"
+						aria-label="단어 사진 추가"
+						title="단어 사진 추가"
+						onclick={openPhotoPicker}
+						disabled={uploadPending}
+					>
+						{uploadPending ? '…' : '＋'}
+					</button>
+				</form>
+				<button
+					class="button button-secondary"
+					type="button"
+					disabled={!data.vocabulary.words.length}
+					title="단어 일괄 삭제"
+					onclick={() => (selectionMode = true)}>선택</button
+				>
+				<button
+					class="button button-secondary"
+					type="button"
+					disabled={!data.vocabulary.words.length}
+					onclick={openTestSettings}>테스트</button
+				>
+			{/if}
 		</div>
 	</div>
 
@@ -213,7 +286,7 @@
 			</p>
 			<label>
 				<span class="visually-hidden">최근 결과 필터</span>
-				<select class="filter-select" bind:value={filter}>
+				<select class="filter-select" bind:value={filter} disabled={selectionMode}>
 					<option value="all">전체 단어</option>
 					<option value="correct">맞은 단어</option>
 					<option value="wrong">틀린 단어</option>
@@ -240,29 +313,50 @@
 	{/if}
 
 	{#if filteredWords.length}
-		<section class="word-list" aria-label="단어 목록">
-			{#each filteredWords as word (word.id)}
-				{@const status = statusFor(word.id)}
-				<div class="word-row">
-					<span class="word-number">{word.number}</span>
-					<div class="word-cell-content">
-						<span class="word-english">{word.english}</span>
-						{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span>{/if}
-						{#if status}<span
-								class={`word-status status-${status}`}
-								title={`최근 결과: ${statusLabel(status)}`}>{statusLabel(status)}</span
-							>{/if}
+		<form
+			id="bulk-delete-form"
+			method="post"
+			action="?/deleteWords"
+			use:enhance={enhanceDeleteWords}
+			onsubmit={confirmDeleteWords}
+		>
+			<section class:word-list-selecting={selectionMode} class="word-list" aria-label="단어 목록">
+				{#each filteredWords as word (word.id)}
+					{@const status = statusFor(word.id)}
+					<div class="word-row">
+						{#if selectionMode}<label class="word-select" aria-label={`${word.english} 선택`}>
+								<input
+									type="checkbox"
+									name="wordIds"
+									value={word.id}
+									checked={selectedWordIds.has(word.id)}
+									onchange={(event) => toggleWordSelection(event, word.id)}
+								/>
+							</label>{/if}
+						<span class="word-number">{word.number}</span>
+						<div class="word-cell-content">
+							<span class="word-english">{word.english}</span>
+							{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span>{/if}
+							{#if status}<span
+									class={`word-status status-${status}`}
+									title={`최근 결과: ${statusLabel(status)}`}>{statusLabel(status)}</span
+								>{/if}
+						</div>
+						<span class="word-meaning"
+							>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
+								>{/if}{word.meaning}</span
+						>
+						<button
+							class="word-edit"
+							type="button"
+							disabled={selectionMode}
+							onclick={() => openWordEdit(word)}
+							aria-label={`${word.english} 단어 편집`}>편집</button
+						>
 					</div>
-					<span class="word-meaning">{word.meaning}</span>
-					<button
-						class="word-edit"
-						type="button"
-						onclick={() => openWordEdit(word)}
-						aria-label={`${word.english} 단어 편집`}>편집</button
-					>
-				</div>
-			{/each}
-		</section>
+				{/each}
+			</section>
+		</form>
 	{:else}
 		<section class="empty-state" aria-labelledby="words-empty-title">
 			<div class="empty-state-mark" aria-hidden="true">＋</div>
@@ -280,6 +374,23 @@
 		</section>
 	{/if}
 </div>
+
+<dialog
+	bind:this={uploadDialog}
+	class="modal"
+	aria-labelledby="ocr-progress-title"
+	aria-describedby="ocr-progress-description"
+	oncancel={(event) => event.preventDefault()}
+>
+	<div class="modal-body ocr-modal-body">
+		<h2 id="ocr-progress-title">OCR 진행 중</h2>
+		<p id="ocr-progress-description">
+			{uploadFileCount}장의 사진에서 단어를 읽고 있어요. 잠시만 기다려 주세요.
+		</p>
+		<progress class="ocr-progress" aria-label="OCR 처리 중"></progress>
+		<p class="ocr-warning">새로고침하거나 창을 닫지 마세요. 분석 결과가 저장되지 않을 수 있어요.</p>
+	</div>
+</dialog>
 
 <dialog bind:this={testDialog} class="modal" aria-labelledby="test-settings-title">
 	<div class="modal-body">
@@ -353,7 +464,11 @@
 				</div>
 			</fieldset>
 
-			{#if form?.message}<p class="message message-error" role="alert" aria-live="assertive">
+			{#if form?.action === 'startTest' && form.message}<p
+					class="message message-error"
+					role="alert"
+					aria-live="assertive"
+				>
 					{form.message}
 				</p>{/if}
 			<div class="modal-actions">
@@ -411,7 +526,11 @@
 						required
 					/>
 				</div>
-				{#if form?.message}<p class="message message-error" role="alert" aria-live="assertive">
+				{#if form?.action === 'updateWord' && form.message}<p
+						class="message message-error"
+						role="alert"
+						aria-live="assertive"
+					>
 						{form.message}
 					</p>{/if}
 			</form>

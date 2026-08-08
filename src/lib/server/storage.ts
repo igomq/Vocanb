@@ -122,6 +122,25 @@ export async function createVocabulary(userId: string, title: string, rangeLabel
 	});
 }
 
+export async function deleteVocabulary(userId: string, vocabularyId: string) {
+	const path = vocabularyPath(userId, vocabularyId);
+	return withLock(path, () =>
+		withLock(userRoot(userId), async () => {
+			const index = await readIndex(userId);
+			if (!index.vocabularyIds.includes(vocabularyId))
+				throw new Error('단어장을 찾을 수 없습니다.');
+			await Promise.all([
+				rm(path, { force: true }),
+				rm(uploadDirectory(userId, vocabularyId), { recursive: true, force: true })
+			]);
+			await atomicWrite(indexPath(userId), {
+				...index,
+				vocabularyIds: index.vocabularyIds.filter((id) => id !== vocabularyId)
+			});
+		})
+	);
+}
+
 export async function updateVocabulary(
 	userId: string,
 	vocabularyId: string,

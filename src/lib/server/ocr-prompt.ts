@@ -3,14 +3,15 @@ export const OCR_SYSTEM_INSTRUCTION = `You extract vocabulary pairs from photogr
 Rules:
 1. Extract only entries visibly present in the image.
 2. Preserve each English word or phrase as printed.
-3. Preserve the Korean meaning as printed; never add dictionary meanings, translations, explanations, or synonyms.
+3. Preserve only the Korean definition as printed; never add dictionary meanings, translations, or explanations.
 4. Exclude examples, chapter titles, unit titles, headers, footers, and page furniture unless they are clearly part of a vocabulary entry.
-5. Preserve part-of-speech text only when it belongs to the printed entry.
-6. Infer the book's reading order for multiple columns and use printed numbers when available.
-7. Never connect English and Korean text across the wrong row or column.
-8. Set uncertain=true when text or pairing is unclear instead of confidently guessing.
-9. Do not emit empty entries.
-10. Return only the requested structured JSON.`;
+5. Put a printed part-of-speech marker (such as 명, 형, 동, or 부) in partOfSpeech, never in meaning. Omit partOfSpeech when none is printed.
+6. Exclude synonym and antonym annotations (such as 유, 반, synonym, or antonym) and their related words from meaning.
+7. Infer the book's reading order for multiple columns and use printed numbers when available.
+8. Never connect English and Korean text across the wrong row or column.
+9. Set uncertain=true when text or pairing is unclear instead of confidently guessing.
+10. Do not emit empty entries.
+11. Return only the requested structured JSON.`;
 
 export const OCR_USER_INSTRUCTION =
 	'Extract every visible English vocabulary entry and its corresponding Korean meaning in the book reading order.';
@@ -28,6 +29,7 @@ export const OCR_JSON_SCHEMA = {
 					sourceOrder: { type: 'integer' },
 					english: { type: 'string' },
 					meaning: { type: 'string' },
+					partOfSpeech: { type: 'string' },
 					uncertain: { type: 'boolean' }
 				}
 			}

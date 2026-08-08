@@ -158,6 +158,12 @@ a {
 	overflow: auto;
 }
 
+.sidebar-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 32px;
+	align-items: center;
+}
+
 .sidebar-link {
 	display: flex;
 	min-height: 44px;
@@ -193,6 +199,21 @@ a {
 
 .sidebar-link-copy {
 	min-width: 0;
+}
+
+.sidebar-delete {
+	width: 30px;
+	height: 30px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: #a0a5aa;
+	font-size: 18px;
+}
+
+.sidebar-delete:hover {
+	background: #fff0ee;
+	color: var(--danger);
 }
 
 .sidebar-link-title,
@@ -612,6 +633,22 @@ h2 {
 	padding: 5px 0;
 }
 
+.word-list-selecting .word-row {
+	grid-template-columns: 28px 44px minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.word-select {
+	display: grid;
+	place-items: center;
+}
+
+.word-select input {
+	width: 17px;
+	height: 17px;
+	margin: 0;
+	accent-color: var(--accent);
+}
+
 .word-number {
 	color: #9ba0a4;
 	font-size: 12px;
@@ -633,6 +670,13 @@ h2 {
 
 .word-meaning {
 	color: #5b6268;
+}
+
+.part-of-speech {
+	margin-right: 6px;
+	color: #969ba0;
+	font-size: 0.78em;
+	font-weight: 500;
 }
 
 .word-cell-content {
@@ -739,6 +783,31 @@ h2 {
 	width: 100%;
 	height: 100%;
 	object-fit: cover;
+}
+
+.ocr-modal-body h2 {
+	margin-bottom: 8px;
+}
+
+.ocr-modal-body > p {
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.6;
+}
+
+.ocr-progress {
+	width: 100%;
+	height: 8px;
+	margin: 8px 0 14px;
+	accent-color: var(--accent);
+}
+
+.ocr-modal-body .ocr-warning {
+	margin-bottom: 0;
+	border-radius: 9px;
+	background: #fff4df;
+	padding: 10px 12px;
+	color: var(--warning);
 }
 
 .broken-thumb {
@@ -991,6 +1060,10 @@ h2 {
 		gap: 8px;
 	}
 
+	.word-list-selecting .word-row {
+		grid-template-columns: 24px 34px minmax(0, 1fr) minmax(0, 1fr) 42px;
+	}
+
 	.word-number {
 		font-size: 11px;
 	}
@@ -1047,6 +1120,19 @@ h2 {
 		flex: 0 0 auto;
 	}
 
+	.word-toolbar.selection-mode {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.word-toolbar.selection-mode .word-toolbar-right {
+		width: 100%;
+	}
+
+	.word-toolbar.selection-mode .button {
+		flex: 1;
+	}
+
 	.word-toolbar-right .button,
 	.word-toolbar-right .icon-button {
 		flex: none;
@@ -1055,6 +1141,10 @@ h2 {
 	.word-row {
 		grid-template-columns: 27px minmax(0, 1fr) minmax(0, 1fr) 36px;
 		gap: 6px;
+	}
+
+	.word-list-selecting .word-row {
+		grid-template-columns: 22px 27px minmax(0, 1fr) minmax(0, 1fr) 36px;
 	}
 
 	.word-cell-content {
