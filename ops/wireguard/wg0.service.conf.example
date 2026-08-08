@@ -1,0 +1,9 @@
+[Interface]
+Address = 10.255.255.254/30
+PrivateKey = <SERVICE_PRIVATE_KEY>
+
+[Peer]
+PublicKey = <ROUTE_PUBLIC_KEY>
+Endpoint = <ROUTE_PUBLIC_IP>:51820
+AllowedIPs = 10.255.255.253/32
+PersistentKeepalive = 25

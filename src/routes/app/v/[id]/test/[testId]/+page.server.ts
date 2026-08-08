@@ -1,0 +1,61 @@
+import { ResultStatusSchema, summarizeTest } from '$lib/domain';
+import { getVocabulary, updateVocabulary } from '$lib/server/storage';
+import { fail, redirect } from '@sveltejs/kit';
+import type { Actions, PageServerLoad } from './$types';
+
+export const load: PageServerLoad = async ({ locals, params }) => {
+	const vocabulary = await getVocabulary(locals.userId!, params.id);
+	const test = vocabulary?.tests.find((candidate) => candidate.id === params.testId);
+	if (!vocabulary || !test) redirect(303, `/app/v/${params.id}`);
+	return {
+		title: vocabulary.title,
+		rangeLabel: vocabulary.rangeLabel,
+		test,
+		summary: summarizeTest(test, vocabulary.words.length)
+	};
+};
+
+export const actions: Actions = {
+	evaluate: async ({ request, locals, params }) => {
+		const data = await request.formData();
+		const wordId = String(data.get('wordId') || '');
+		const result = ResultStatusSchema.safeParse(data.get('result'));
+		if (!result.success) return fail(400, { message: '평가를 선택해 주세요.' });
+		try {
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
+				const test = vocabulary.tests.find(
+					(candidate) => candidate.id === params.testId && !candidate.completedAt
+				);
+				const item = test?.items.find((candidate) => candidate.wordId === wordId);
+				if (!item) throw new Error('테스트 항목을 찾을 수 없습니다.');
+				item.result = result.data;
+				return vocabulary;
+			});
+			return { success: true };
+		} catch (error) {
+			console.error(
+				'Test evaluation failed:',
+				error instanceof Error ? error.message : 'unknown error'
+			);
+			return fail(400, { message: '평가를 저장하지 못했습니다.' });
+		}
+	},
+	complete: async ({ locals, params }) => {
+		try {
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
+				const test = vocabulary.tests.find(
+					(candidate) => candidate.id === params.testId && !candidate.completedAt
+				);
+				if (!test) throw new Error('테스트를 찾을 수 없습니다.');
+				if (test.items.some((item) => !item.result)) throw new Error('모든 단어를 평가해 주세요.');
+				test.completedAt = new Date().toISOString();
+				return vocabulary;
+			});
+		} catch (error) {
+			return fail(400, {
+				message: error instanceof Error ? error.message : '테스트를 완료하지 못했습니다.'
+			});
+		}
+		redirect(303, `/app/v/${params.id}?completed=1`);
+	}
+};

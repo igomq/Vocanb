@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>me.gomq.vocanb</groupId>
+  <artifactId>teamcity-settings</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <properties>
+    <kotlin.version>1.9.22</kotlin.version>
+    <teamcity.dsl.version>2024.03</teamcity.dsl.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.jetbrains.teamcity</groupId>
+      <artifactId>configs-dsl-kotlin-latest</artifactId>
+      <version>${teamcity.dsl.version}</version>
+      <scope>compile</scope>
+    </dependency>
+  </dependencies>
+  <repositories>
+    <repository>
+      <id>jetbrains-all</id>
+      <url>https://download.jetbrains.com/teamcity-repository</url>
+    </repository>
+  </repositories>
+</project>

@@ -1,0 +1,8 @@
+[Interface]
+Address = 10.255.255.253/30
+ListenPort = 51820
+PrivateKey = <ROUTE_PRIVATE_KEY>
+
+[Peer]
+PublicKey = <SERVICE_PUBLIC_KEY>
+AllowedIPs = 10.255.255.254/32
