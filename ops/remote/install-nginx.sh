@@ -24,7 +24,7 @@ printf '%s\n' \
     "    server_name $domain;" \
     "    ssl_certificate $certificate;" \
     "    ssl_certificate_key $certificate_key;" \
-    '    client_max_body_size 50m;' \
+    '    client_max_body_size 100m;' \
     '    location / {' \
     '        proxy_pass http://10.255.255.254:3000;' \
     '        proxy_http_version 1.1;' \
@@ -32,8 +32,8 @@ printf '%s\n' \
     '        proxy_set_header X-Real-IP $remote_addr;' \
     '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
     '        proxy_set_header X-Forwarded-Proto $scheme;' \
-    '        proxy_read_timeout 180s;' \
-    '        proxy_send_timeout 180s;' \
+    '        proxy_read_timeout 300s;' \
+    '        proxy_send_timeout 300s;' \
     '    }' \
     '}' > "$target"
 

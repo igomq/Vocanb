@@ -45,10 +45,10 @@ export const actions: Actions = {
 			.getAll('images')
 			.filter((value): value is File => value instanceof File && value.size > 0);
 		if (!files.length) return fail(400, { message: '추가할 사진을 선택해 주세요.' });
-		if (files.length > 5)
-			return fail(400, { message: '사진은 한 번에 최대 5장까지 추가할 수 있습니다.' });
-		if (files.reduce((total, file) => total + file.size, 0) > 45 * 1024 * 1024) {
-			return fail(400, { message: '한 번에 올리는 사진은 모두 합쳐 45MB 이하여야 합니다.' });
+		if (files.length > 10)
+			return fail(400, { message: '사진은 한 번에 최대 10장까지 추가할 수 있습니다.' });
+		if (files.reduce((total, file) => total + file.size, 0) > 90 * 1024 * 1024) {
+			return fail(400, { message: '한 번에 올리는 사진은 모두 합쳐 90MB 이하여야 합니다.' });
 		}
 		const prepared: {
 			imageId: string;
