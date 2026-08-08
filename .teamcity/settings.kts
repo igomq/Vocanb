@@ -28,14 +28,19 @@ object VocanbBuildDeploy : BuildType({
         script {
             name = "Check, test, and build"
             scriptContent = """
-                corepack enable
-                corepack prepare pnpm@10.33.0 --activate
-                pnpm install --frozen-lockfile
-                pnpm check
-                pnpm test
-                pnpm build
+                docker run --rm \
+                  --user "${'$'}(id -u):${'$'}(id -g)" \
+                  --volumes-from teamcity-agent \
+                  --env HOME=/tmp \
+                  --env COREPACK_HOME=/tmp/corepack \
+                  --workdir "%teamcity.build.checkoutDir%" \
+                  node:24-bookworm-slim sh -lc '
+                    corepack pnpm install --frozen-lockfile
+                    corepack pnpm check
+                    corepack pnpm test
+                    corepack pnpm build
+                  '
             """.trimIndent()
-            dockerImage = "node:24-bookworm-slim"
         }
         script {
             name = "Package release"
