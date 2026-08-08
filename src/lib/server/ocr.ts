@@ -53,6 +53,17 @@ export class VertexOcrProvider implements OcrProvider {
 				await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
 			}
 		}
+		const failure = lastError as {
+			name?: string;
+			status?: number;
+			code?: number;
+			message?: string;
+		};
+		console.error('Vertex OCR request failed:', {
+			name: failure?.name,
+			status: failure?.status ?? failure?.code,
+			message: failure?.name === 'ApiError' ? failure.message : undefined
+		});
 		throw new Error('단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.', { cause: lastError });
 	}
 }

@@ -17,21 +17,17 @@ export const OCR_USER_INSTRUCTION =
 
 export const OCR_JSON_SCHEMA = {
 	type: 'object',
-	additionalProperties: false,
 	required: ['entries'],
 	properties: {
 		entries: {
 			type: 'array',
-			maxItems: 500,
 			items: {
 				type: 'object',
-				additionalProperties: false,
 				required: ['sourceOrder', 'english', 'meaning', 'uncertain'],
 				properties: {
-					sourceOrder: { type: 'integer', minimum: 0 },
-					printedNumber: { type: ['string', 'null'] },
-					english: { type: 'string', minLength: 1 },
-					meaning: { type: 'string', minLength: 1 },
+					sourceOrder: { type: 'integer' },
+					english: { type: 'string' },
+					meaning: { type: 'string' },
 					uncertain: { type: 'boolean' }
 				}
 			}
