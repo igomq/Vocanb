@@ -1,9 +1,12 @@
 import {
 	OcrResponseSchema,
+	WordSchema,
 	createTestSession,
 	normalizeOcrEntry,
 	parseTestRange,
+	removeWords,
 	summarizeTest,
+	type Vocabulary,
 	type Word
 } from './domain';
 import { describe, expect, it } from 'vitest';
@@ -18,6 +21,46 @@ const words: Word[] = [1, 2, 3].map((number) => ({
 	createdAt: '2026-01-01T00:00:00.000Z',
 	updatedAt: '2026-01-01T00:00:00.000Z'
 }));
+
+const deletionVocabulary: Vocabulary = {
+	schemaVersion: 1,
+	id: '30000000-0000-4000-8000-000000000001',
+	title: '삭제 테스트',
+	rangeLabel: '',
+	createdAt: '2026-01-01T00:00:00.000Z',
+	updatedAt: '2026-01-01T00:00:00.000Z',
+	images: [
+		{
+			id: '10000000-0000-4000-8000-000000000001',
+			filename: '10000000-0000-4000-8000-000000000001.jpg',
+			createdAt: '2026-01-01T00:00:00.000Z',
+			wordCount: 99
+		},
+		{
+			id: '20000000-0000-4000-8000-000000000001',
+			filename: '20000000-0000-4000-8000-000000000001.jpg',
+			createdAt: '2026-01-01T00:00:00.000Z',
+			wordCount: 99
+		}
+	],
+	words: [
+		words[0],
+		words[1],
+		{
+			...words[2],
+			id: '00000000-0000-4000-8000-000000000004',
+			number: 3,
+			sourceImageId: '20000000-0000-4000-8000-000000000001'
+		},
+		{
+			...words[2],
+			id: '00000000-0000-4000-8000-000000000005',
+			number: 4,
+			sourceImageId: null
+		}
+	],
+	tests: []
+};
 
 describe('test range and mode', () => {
 	it('selects the whole vocabulary', () => {
@@ -53,6 +96,25 @@ describe('test range and mode', () => {
 });
 
 describe('results and OCR schema', () => {
+	it('accepts manual words without a photo source', () => {
+		expect(WordSchema.parse({ ...words[0], sourceImageId: null })).toHaveProperty(
+			'sourceImageId',
+			null
+		);
+	});
+
+	it('removes words, finds orphan photos, recalculates counts, and keeps manual words', () => {
+		const result = removeWords(deletionVocabulary, new Set([words[0].id, words[1].id]));
+		expect(result.orphanImages.map(({ id }) => id)).toEqual([
+			'10000000-0000-4000-8000-000000000001'
+		]);
+		expect(result.vocabulary.images.map(({ wordCount }) => wordCount)).toEqual([1]);
+		expect(result.vocabulary.words).toMatchObject([
+			{ number: 1, sourceImageId: '20000000-0000-4000-8000-000000000001' },
+			{ number: 2, sourceImageId: null }
+		]);
+	});
+
 	it('counts all four result states correctly', () => {
 		const session = createTestSession(
 			[...words, { ...words[0], id: '00000000-0000-4000-8000-000000000004', number: 4 }],

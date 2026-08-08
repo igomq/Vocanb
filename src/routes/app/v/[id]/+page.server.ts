@@ -3,6 +3,7 @@ import {
 	latestCompletedTest,
 	normalizeOcrEntry,
 	parseTestRange,
+	removeWords,
 	summarizeTest,
 	type TestSession,
 	type Word
@@ -34,9 +35,33 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 };
 
 function text(data: FormData, name: string, max: number) {
-	const value = String(data.get(name) || '').trim();
+	const value = String(data.get(name) ?? '').trim();
 	if (!value || value.length > max) throw new Error('입력값을 확인해 주세요.');
 	return value;
+}
+
+function optionalText(data: FormData, name: string, max: number) {
+	const value = String(data.get(name) ?? '').trim();
+	if (value.length > max) throw new Error('입력값을 확인해 주세요.');
+	return value || undefined;
+}
+
+async function deleteVocabularyWords(
+	userId: string,
+	vocabularyId: string,
+	wordIds: ReadonlySet<string>
+) {
+	let orphanImageFilenames: string[] = [];
+	await updateVocabulary(userId, vocabularyId, (vocabulary) => {
+		const result = removeWords(vocabulary, wordIds);
+		orphanImageFilenames = result.orphanImages.map(({ filename }) => filename);
+		return result.vocabulary;
+	});
+	await Promise.all(
+		orphanImageFilenames.map((filename) =>
+			rm(imagePath(userId, vocabularyId, filename), { force: true })
+		)
+	);
 }
 
 export const actions: Actions = {
@@ -104,6 +129,7 @@ export const actions: Actions = {
 		const limitedResults = limitOcrEntries(results, targetWordCount);
 		for (const [index, bytes] of normalized.entries()) {
 			const result = limitedResults[index];
+			if (!result.entries.length) continue;
 			const now = new Date().toISOString();
 			const imageId = crypto.randomUUID();
 			prepared.push({
@@ -167,18 +193,50 @@ export const actions: Actions = {
 			});
 		}
 	},
+	addWord: async ({ request, locals, params }) => {
+		const data = await request.formData();
+		try {
+			const english = text(data, 'english', 300);
+			const meaning = text(data, 'meaning', 1000);
+			const partOfSpeech = optionalText(data, 'partOfSpeech', 30);
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
+				const now = new Date().toISOString();
+				vocabulary.words.push({
+					id: crypto.randomUUID(),
+					number: Math.max(0, ...vocabulary.words.map((word) => word.number)) + 1,
+					english,
+					meaning,
+					...(partOfSpeech ? { partOfSpeech } : {}),
+					sourceImageId: null,
+					uncertain: false,
+					createdAt: now,
+					updatedAt: now
+				});
+				return vocabulary;
+			});
+			return { success: true, action: 'addWord', message: '단어를 추가했습니다.' };
+		} catch (error) {
+			console.error('Word add failed:', error instanceof Error ? error.message : 'unknown error');
+			return fail(400, {
+				action: 'addWord',
+				message: '단어를 추가하지 못했습니다. 입력값을 확인해 주세요.'
+			});
+		}
+	},
 	updateWord: async ({ request, locals, params }) => {
 		const data = await request.formData();
 		const wordId = String(data.get('wordId') || '');
 		try {
 			const english = text(data, 'english', 300);
 			const meaning = text(data, 'meaning', 1000);
+			const partOfSpeech = optionalText(data, 'partOfSpeech', 30);
 			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
 				const word = vocabulary.words.find((candidate) => candidate.id === wordId);
 				if (!word) throw new Error('단어를 찾을 수 없습니다.');
 				Object.assign(word, {
 					english,
 					meaning,
+					partOfSpeech,
 					uncertain: false,
 					updatedAt: new Date().toISOString()
 				});
@@ -199,13 +257,7 @@ export const actions: Actions = {
 	deleteWord: async ({ request, locals, params }) => {
 		const wordId = String((await request.formData()).get('wordId') || '');
 		try {
-			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
-				const remaining = vocabulary.words.filter((word) => word.id !== wordId);
-				if (remaining.length === vocabulary.words.length)
-					throw new Error('단어를 찾을 수 없습니다.');
-				vocabulary.words = remaining.map((word, index) => ({ ...word, number: index + 1 }));
-				return vocabulary;
-			});
+			await deleteVocabularyWords(locals.userId!, params.id, new Set([wordId]));
 			return {
 				success: true,
 				action: 'deleteWord',
@@ -224,13 +276,7 @@ export const actions: Actions = {
 		if (!wordIds.size)
 			return fail(400, { action: 'deleteWords', message: '삭제할 단어를 선택해 주세요.' });
 		try {
-			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
-				const remaining = vocabulary.words.filter((word) => !wordIds.has(word.id));
-				if (vocabulary.words.length - remaining.length !== wordIds.size)
-					throw new Error('단어를 찾을 수 없습니다.');
-				vocabulary.words = remaining.map((word, index) => ({ ...word, number: index + 1 }));
-				return vocabulary;
-			});
+			await deleteVocabularyWords(locals.userId!, params.id, wordIds);
 			return {
 				success: true,
 				action: 'deleteWords',

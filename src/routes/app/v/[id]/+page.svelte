@@ -10,7 +10,7 @@
 	let selectedStatuses = new SvelteSet<ResultStatus>();
 	let testAll = $state(true);
 	let testDialog: HTMLDialogElement | undefined = $state();
-	let editDialog: HTMLDialogElement | undefined = $state();
+	let wordDialog: HTMLDialogElement | undefined = $state();
 	let leaveDialog: HTMLDialogElement | undefined = $state();
 	let uploadSettingsDialog: HTMLDialogElement | undefined = $state();
 	let uploadDialog: HTMLDialogElement | undefined = $state();
@@ -19,6 +19,7 @@
 	let editingWord = $state<Word | null>(null);
 	let editEnglish = $state('');
 	let editMeaning = $state('');
+	let editPartOfSpeech = $state('');
 	let uploadPending = $state(false);
 	let uploadFileCount = $state(0);
 	let startPending = $state(false);
@@ -34,10 +35,6 @@
 		{ value: 'unknown', label: '모르는 단어' },
 		{ value: 'ambiguous', label: '헷갈린 단어' }
 	];
-
-	$effect(() => {
-		if (editingWord && editDialog && !editDialog.open) editDialog.showModal();
-	});
 
 	let filteredWords = $derived(
 		filterAll
@@ -80,6 +77,12 @@
 
 	function openPhotoPicker() {
 		photoInput?.click();
+	}
+
+	function imageNumberFor(sourceImageId: string | null | undefined) {
+		if (!sourceImageId) return undefined;
+		const index = data.vocabulary.images.findIndex((image) => image.id === sourceImageId);
+		return index === -1 ? undefined : index + 1;
 	}
 
 	function openUploadSettings() {
@@ -138,23 +141,26 @@
 		};
 	};
 
-	function openWordEdit(word: Word) {
-		editingWord = word;
-		editEnglish = word.english;
-		editMeaning = word.meaning;
+	function openWordDialog(word?: Word) {
+		editingWord = word ?? null;
+		editEnglish = word?.english ?? '';
+		editMeaning = word?.meaning ?? '';
+		editPartOfSpeech = word?.partOfSpeech ?? '';
+		wordDialog?.showModal();
 	}
 
-	function closeWordEdit() {
-		if (editDialog?.open) editDialog.close();
+	function closeWordDialog() {
+		if (wordDialog?.open) wordDialog.close();
 		editingWord = null;
+		editPartOfSpeech = '';
 	}
 
-	const enhanceEditWord: SubmitFunction = () => {
+	const enhanceWord: SubmitFunction = () => {
 		editPending = true;
 		return async ({ update, result }) => {
 			await update();
 			editPending = false;
-			if (result.type === 'success') closeWordEdit();
+			if (result.type === 'success') closeWordDialog();
 		};
 	};
 
@@ -163,7 +169,7 @@
 		return async ({ update, result }) => {
 			await update();
 			deletePending = false;
-			if (result.type === 'success') closeWordEdit();
+			if (result.type === 'success') closeWordDialog();
 		};
 	};
 
@@ -278,6 +284,9 @@
 				>
 				<button class="button button-secondary" type="button" onclick={closeSelection}>취소</button>
 			{:else}
+				<button class="button button-secondary" type="button" onclick={() => openWordDialog()}
+					>＋ 단어 추가</button
+				>
 				<form
 					id="photo-upload-form"
 					method="post"
@@ -296,14 +305,13 @@
 						onchange={openUploadSettings}
 					/>
 					<button
-						class="icon-button"
+						class="button button-secondary"
 						type="button"
 						aria-label="단어 사진 추가"
-						title="단어 사진 추가"
 						onclick={openPhotoPicker}
 						disabled={uploadPending}
 					>
-						{uploadPending ? '…' : '＋'}
+						{uploadPending ? '분석 중…' : '＋ 사진 추가'}
 					</button>
 				</form>
 				<button
@@ -361,16 +369,19 @@
 
 	{#if data.vocabulary.images.length}
 		<details>
-			<summary class="field-note">올린 사진 {data.vocabulary.images.length}장</summary>
+			<summary class="field-note photo-summary"
+				>원본 사진 {data.vocabulary.images.length}장 · 단어 목록의 사진 번호와 연결됩니다.</summary
+			>
 			<div class="image-strip" aria-label="추가한 단어 사진">
-				{#each data.vocabulary.images as image (image.id)}
-					<div class="image-thumb">
+				{#each data.vocabulary.images as image, index (image.id)}
+					<div class="image-thumb" aria-label={`사진 ${index + 1}`}>
 						<img
 							src={`/app/v/${data.vocabulary.id}/images/${image.id}`}
-							alt=""
+							alt={`사진 ${index + 1}`}
 							onerror={imageError}
 						/>
 						<span class="broken-thumb" hidden aria-label="이미지를 불러오지 못했습니다.">!</span>
+						<span class="image-number" aria-hidden="true">사진 {index + 1}</span>
 					</div>
 				{/each}
 			</div>
@@ -401,6 +412,11 @@
 						<span class="word-number">{word.number}</span>
 						<div class="word-cell-content">
 							<span class="word-english">{word.english}</span>
+							{#if imageNumberFor(word.sourceImageId)}<span class="word-source"
+									>사진 {imageNumberFor(word.sourceImageId)}</span
+								>{:else if word.sourceImageId === null}<span class="word-source is-manual"
+									>직접 입력</span
+								>{/if}
 							{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span>{/if}
 							{#if status}<span
 									class={`word-status status-${status}`}
@@ -415,7 +431,7 @@
 							class="word-edit"
 							type="button"
 							disabled={selectionMode}
-							onclick={() => openWordEdit(word)}
+							onclick={() => openWordDialog(word)}
 							aria-label={`${word.english} 단어 편집`}>편집</button
 						>
 					</div>
@@ -600,59 +616,77 @@
 	</div>
 </dialog>
 
-{#if editingWord}
-	<dialog bind:this={editDialog} class="modal" aria-labelledby="edit-word-title">
-		<div class="modal-body">
-			<div class="modal-header">
-				<div>
-					<h2 id="edit-word-title">단어 편집</h2>
-					<p>자동으로 읽은 내용을 바로잡을 수 있어요.</p>
-				</div>
-				<button
-					class="modal-close"
-					type="button"
-					aria-label="닫기"
-					title="닫기"
-					onclick={closeWordEdit}>×</button
-				>
+<dialog
+	bind:this={wordDialog}
+	class="modal"
+	aria-labelledby="word-dialog-title"
+	oncancel={closeWordDialog}
+>
+	<div class="modal-body">
+		<div class="modal-header">
+			<div>
+				<h2 id="word-dialog-title">{editingWord ? '단어 편집' : '단어 추가'}</h2>
+				<p>
+					{editingWord
+						? '영어, 한국어 뜻, 품사를 바로잡을 수 있어요.'
+						: '사진 없이 직접 저장하는 단어입니다.'}
+				</p>
 			</div>
-
-			<form
-				id="edit-word-form"
-				method="post"
-				action="?/updateWord"
-				use:enhance={enhanceEditWord}
-				class="form-stack"
+			<button
+				class="modal-close"
+				type="button"
+				aria-label="닫기"
+				title="닫기"
+				onclick={closeWordDialog}>×</button
 			>
-				<input type="hidden" name="wordId" value={editingWord.id} />
-				<div class="field">
-					<label for="edit-english">영어</label><input
-						id="edit-english"
-						name="english"
-						maxlength="300"
-						bind:value={editEnglish}
-						required
-					/>
-				</div>
-				<div class="field">
-					<label for="edit-meaning">뜻</label><input
-						id="edit-meaning"
-						name="meaning"
-						maxlength="1000"
-						bind:value={editMeaning}
-						required
-					/>
-				</div>
-				{#if form?.action === 'updateWord' && form.message}<p
-						class="message message-error"
-						role="alert"
-						aria-live="assertive"
-					>
-						{form.message}
-					</p>{/if}
-			</form>
-			<div class="modal-actions">
-				<form
+		</div>
+
+		<form
+			id="word-form"
+			method="post"
+			action={editingWord ? '?/updateWord' : '?/addWord'}
+			use:enhance={enhanceWord}
+			class="form-stack"
+		>
+			{#if editingWord}<input type="hidden" name="wordId" value={editingWord.id} />{/if}
+			<div class="field">
+				<label for="word-english">영어</label><input
+					id="word-english"
+					name="english"
+					maxlength="300"
+					bind:value={editEnglish}
+					autocomplete="off"
+					required
+				/>
+			</div>
+			<div class="field">
+				<label for="word-meaning">한국어 뜻</label><input
+					id="word-meaning"
+					name="meaning"
+					maxlength="1000"
+					bind:value={editMeaning}
+					required
+				/>
+			</div>
+			<div class="field">
+				<label for="word-part-of-speech">품사 <span class="field-optional">선택</span></label><input
+					id="word-part-of-speech"
+					name="partOfSpeech"
+					maxlength="30"
+					bind:value={editPartOfSpeech}
+					placeholder="예: 명사, 동사"
+				/>
+			</div>
+			{#if form?.message && (form.action === (editingWord ? 'updateWord' : 'addWord') || (editingWord && form.action === 'deleteWord'))}<p
+					class="message message-error"
+					role="alert"
+					aria-live="assertive"
+				>
+					{form.message}
+				</p>{/if}
+		</form>
+		<div class="modal-actions">
+			{#if editingWord}<form
 					method="post"
 					action="?/deleteWord"
 					use:enhance={enhanceDeleteWord}
@@ -662,18 +696,14 @@
 					<button class="button button-danger" type="submit" disabled={deletePending}
 						>{deletePending ? '삭제 중…' : '삭제'}</button
 					>
-				</form>
-				<button class="button button-secondary" type="button" onclick={closeWordEdit}>취소</button>
-				<button
-					class="button button-primary"
-					type="submit"
-					form="edit-word-form"
-					disabled={editPending}>{editPending ? '저장 중…' : '저장'}</button
-				>
-			</div>
+				</form>{/if}
+			<button class="button button-secondary" type="button" onclick={closeWordDialog}>취소</button>
+			<button class="button button-primary" type="submit" form="word-form" disabled={editPending}
+				>{editPending ? '저장 중…' : editingWord ? '저장' : '단어 추가'}</button
+			>
 		</div>
-	</dialog>
-{/if}
+	</div>
+</dialog>
 
 <dialog bind:this={leaveDialog} class="modal" aria-labelledby="leave-vocabulary-title">
 	<div class="modal-body">

@@ -11,7 +11,7 @@ export const WordSchema = z
 		english: z.string().trim().min(1).max(300),
 		meaning: z.string().trim().min(1).max(1000),
 		partOfSpeech: z.string().trim().min(1).max(30).optional(),
-		sourceImageId: z.string().uuid(),
+		sourceImageId: z.string().uuid().nullable(),
 		uncertain: z.boolean().default(false),
 		createdAt: z.string(),
 		updatedAt: z.string()
@@ -122,6 +122,32 @@ export function normalizeOcrEntry(entry: OcrResponse['entries'][number]) {
 	const rawPartOfSpeech = (entry.partOfSpeech || prefix?.[1] || '').replace(/\.$/, '').trim();
 	const partOfSpeech = partOfSpeechLabels[rawPartOfSpeech.toLowerCase()] || rawPartOfSpeech;
 	return { ...entry, meaning, ...(partOfSpeech ? { partOfSpeech } : {}) };
+}
+
+export function removeWords(vocabulary: Vocabulary, wordIds: ReadonlySet<string>) {
+	if (!wordIds.size) throw new Error('삭제할 단어를 선택해 주세요.');
+	const words = vocabulary.words.filter((word) => !wordIds.has(word.id));
+	if (vocabulary.words.length - words.length !== wordIds.size)
+		throw new Error('단어를 찾을 수 없습니다.');
+
+	const wordCounts = new Map<string, number>();
+	for (const word of words) {
+		if (word.sourceImageId)
+			wordCounts.set(word.sourceImageId, (wordCounts.get(word.sourceImageId) || 0) + 1);
+	}
+	const orphanImages = vocabulary.images.filter((image) => !wordCounts.has(image.id));
+	const images = vocabulary.images
+		.filter((image) => wordCounts.has(image.id))
+		.map((image) => ({ ...image, wordCount: wordCounts.get(image.id)! }));
+
+	return {
+		vocabulary: {
+			...vocabulary,
+			words: words.map((word, index) => ({ ...word, number: index + 1 })),
+			images
+		},
+		orphanImages
+	};
 }
 
 export function parseTestRange(

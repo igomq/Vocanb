@@ -31,6 +31,15 @@ describe('OCR provider boundary', () => {
 		expect(instruction).toMatch(/return fewer/);
 	});
 
+	it('prioritizes prominent headwords and gates secondary words on a target', () => {
+		expect(buildOcrUserInstruction()).toMatch(/large or bold English headwords/);
+		expect(buildOcrUserInstruction()).toMatch(/only default entries/);
+		const targeted = buildOcrUserInstruction(3);
+		expect(targeted).toMatch(/prominent headwords alone do not reach the target/);
+		expect(targeted).toMatch(/clearly paired/);
+		expect(targeted).toMatch(/hard maximum target/);
+	});
+
 	it('caps batch OCR entries in image and reading order', () => {
 		const response = (entries: [number, string][]) =>
 			OcrResponseSchema.parse({
