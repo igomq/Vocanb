@@ -8,7 +8,7 @@ import {
 	type Word
 } from '$lib/domain';
 import { normalizeUpload } from '$lib/server/image';
-import { ocrProvider } from '$lib/server/ocr';
+import { limitOcrEntries, mapWithConcurrency, ocrProvider } from '$lib/server/ocr';
 import { getVocabulary, imagePath, updateVocabulary, uploadDirectory } from '$lib/server/storage';
 import { fail, redirect } from '@sveltejs/kit';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -58,32 +58,52 @@ export const actions: Actions = {
 				message: '한 번에 올리는 사진은 모두 합쳐 90MB 이하여야 합니다.'
 			});
 		}
+		const targetValue = String(data.get('targetWordCount') || '').trim();
+		let targetWordCount: number | undefined;
+		if (targetValue) {
+			const parsedTarget = Number(targetValue);
+			if (!Number.isInteger(parsedTarget) || parsedTarget < 1 || parsedTarget > files.length * 500)
+				return fail(400, {
+					action: 'upload',
+					message: `단어 수는 1~${files.length * 500} 사이의 정수로 입력해 주세요.`
+				});
+			targetWordCount = parsedTarget;
+		}
+
+		let normalized: Buffer[];
+		try {
+			normalized = await mapWithConcurrency(files, 2, normalizeUpload);
+		} catch (error) {
+			return fail(400, {
+				action: 'upload',
+				message: error instanceof Error ? error.message : '이미지를 읽을 수 없습니다.'
+			});
+		}
+
+		let results: Awaited<ReturnType<typeof ocrProvider.extract>>[];
+		try {
+			const targetPerImage =
+				targetWordCount === undefined ? undefined : Math.ceil(targetWordCount / files.length);
+			results = await mapWithConcurrency(normalized, 2, (bytes) =>
+				ocrProvider.extract(bytes, targetPerImage)
+			);
+		} catch (error) {
+			console.error('OCR failed:', error instanceof Error ? error.message : 'unknown error');
+			return fail(502, {
+				action: 'upload',
+				message: '단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.'
+			});
+		}
+
 		const prepared: {
 			imageId: string;
 			filename: string;
 			bytes: Buffer;
 			words: Omit<Word, 'number'>[];
 		}[] = [];
-		for (const file of files) {
-			let bytes: Buffer;
-			try {
-				bytes = await normalizeUpload(file);
-			} catch (error) {
-				return fail(400, {
-					action: 'upload',
-					message: error instanceof Error ? error.message : '이미지를 읽을 수 없습니다.'
-				});
-			}
-			let result;
-			try {
-				result = await ocrProvider.extract(bytes);
-			} catch (error) {
-				console.error('OCR failed:', error instanceof Error ? error.message : 'unknown error');
-				return fail(502, {
-					action: 'upload',
-					message: '단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.'
-				});
-			}
+		const limitedResults = limitOcrEntries(results, targetWordCount);
+		for (const [index, bytes] of normalized.entries()) {
+			const result = limitedResults[index];
 			const now = new Date().toISOString();
 			const imageId = crypto.randomUUID();
 			prepared.push({
@@ -130,7 +150,10 @@ export const actions: Actions = {
 			return {
 				success: true,
 				action: 'upload',
-				message: `${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
+				message:
+					targetWordCount === undefined
+						? `${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
+						: `요청한 ${targetWordCount}개 중 ${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
 			};
 		} catch (error) {
 			await Promise.all(written.map((path) => rm(path, { force: true })));

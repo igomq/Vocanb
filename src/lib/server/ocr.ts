@@ -1,10 +1,53 @@
 import { OcrResponseSchema, type OcrResponse } from '$lib/domain';
 import { GoogleGenAI, MediaResolution, ThinkingLevel, createPartFromBase64 } from '@google/genai';
 import { getVertexConfig } from './config';
-import { OCR_JSON_SCHEMA, OCR_SYSTEM_INSTRUCTION, OCR_USER_INSTRUCTION } from './ocr-prompt';
+import { OCR_JSON_SCHEMA, OCR_SYSTEM_INSTRUCTION, buildOcrUserInstruction } from './ocr-prompt';
 
 export interface OcrProvider {
-	extract(image: Buffer): Promise<OcrResponse>;
+	extract(image: Buffer, targetEntries?: number): Promise<OcrResponse>;
+}
+
+export async function mapWithConcurrency<T, R>(
+	values: readonly T[],
+	limit: number,
+	mapper: (value: T, index: number) => Promise<R>
+) {
+	if (!Number.isInteger(limit) || limit < 1) throw new Error('Concurrency limit must be positive.');
+	const results = new Array<R>(values.length);
+	let nextIndex = 0;
+	let failureIndex = Number.POSITIVE_INFINITY;
+	let failureError: unknown;
+
+	const worker = async () => {
+		while (true) {
+			const index = nextIndex++;
+			if (index >= values.length || failureIndex !== Number.POSITIVE_INFINITY) return;
+			try {
+				results[index] = await mapper(values[index], index);
+			} catch (error) {
+				if (index < failureIndex) {
+					failureIndex = index;
+					failureError = error;
+				}
+			}
+		}
+	};
+
+	await Promise.all(Array.from({ length: Math.min(limit, values.length) }, worker));
+	if (failureIndex !== Number.POSITIVE_INFINITY) throw failureError;
+	return results;
+}
+
+export function limitOcrEntries(responses: readonly OcrResponse[], targetEntries?: number) {
+	let remaining = targetEntries;
+	return responses.map((response) => {
+		const entries = [...response.entries].sort(
+			(left, right) => left.sourceOrder - right.sourceOrder
+		);
+		const selected = remaining === undefined ? entries : entries.slice(0, remaining);
+		if (remaining !== undefined) remaining -= selected.length;
+		return { ...response, entries: selected };
+	});
 }
 
 function retryable(error: unknown) {
@@ -15,7 +58,7 @@ function retryable(error: unknown) {
 }
 
 export class VertexOcrProvider implements OcrProvider {
-	async extract(image: Buffer) {
+	async extract(image: Buffer, targetEntries?: number) {
 		const { project, location, model } = getVertexConfig();
 		const client = new GoogleGenAI({ vertexai: true, project, location });
 		let lastError: unknown;
@@ -27,7 +70,7 @@ export class VertexOcrProvider implements OcrProvider {
 						{
 							role: 'user',
 							parts: [
-								{ text: OCR_USER_INSTRUCTION },
+								{ text: buildOcrUserInstruction(targetEntries) },
 								createPartFromBase64(image.toString('base64'), 'image/jpeg')
 							]
 						}

@@ -16,6 +16,11 @@ Rules:
 export const OCR_USER_INSTRUCTION =
 	'Extract every visible English vocabulary entry and its corresponding Korean meaning in the book reading order.';
 
+export function buildOcrUserInstruction(targetEntries?: number) {
+	if (targetEntries === undefined) return OCR_USER_INSTRUCTION;
+	return `${OCR_USER_INSTRUCTION} Use an approximate soft target of ${targetEntries} entries for this image. Never invent, duplicate, or pad entries to reach it; if fewer entries are visibly present, return fewer.`;
+}
+
 export const OCR_JSON_SCHEMA = {
 	type: 'object',
 	required: ['entries'],

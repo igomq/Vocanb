@@ -6,14 +6,16 @@
 	import { SvelteSet } from 'svelte/reactivity';
 
 	let { data, form } = $props();
-	let filter = $state<'all' | ResultStatus>('all');
+	let filterAll = $state(true);
+	let selectedStatuses = new SvelteSet<ResultStatus>();
 	let testAll = $state(true);
 	let testDialog: HTMLDialogElement | undefined = $state();
 	let editDialog: HTMLDialogElement | undefined = $state();
 	let leaveDialog: HTMLDialogElement | undefined = $state();
+	let uploadSettingsDialog: HTMLDialogElement | undefined = $state();
 	let uploadDialog: HTMLDialogElement | undefined = $state();
-	let uploadForm: HTMLFormElement | undefined = $state();
 	let photoInput: HTMLInputElement | undefined = $state();
+	let uploadTargetInput: HTMLInputElement | undefined = $state();
 	let editingWord = $state<Word | null>(null);
 	let editEnglish = $state('');
 	let editMeaning = $state('');
@@ -26,14 +28,34 @@
 	let selectionMode = $state(false);
 	let selectedWordIds = new SvelteSet<string>();
 
+	const statusOptions: { value: ResultStatus; label: string }[] = [
+		{ value: 'correct', label: '맞은 단어' },
+		{ value: 'wrong', label: '틀린 단어' },
+		{ value: 'unknown', label: '모르는 단어' },
+		{ value: 'ambiguous', label: '헷갈린 단어' }
+	];
+
 	$effect(() => {
 		if (editingWord && editDialog && !editDialog.open) editDialog.showModal();
 	});
 
 	let filteredWords = $derived(
-		filter === 'all'
+		filterAll
 			? data.vocabulary.words
-			: data.vocabulary.words.filter((word) => data.latestResult?.results[word.id] === filter)
+			: data.vocabulary.words.filter((word) => {
+					const status = statusFor(word.id);
+					return status !== undefined && selectedStatuses.has(status);
+				})
+	);
+	let filterSummary = $derived(
+		filterAll
+			? '전체 단어'
+			: selectedStatuses.size
+				? statusOptions
+						.filter(({ value }) => selectedStatuses.has(value))
+						.map(({ label }) => label.replace(' 단어', ''))
+						.join(' · ')
+				: '결과 선택 없음'
 	);
 
 	function statusFor(wordId: string): ResultStatus | undefined {
@@ -60,8 +82,29 @@
 		photoInput?.click();
 	}
 
-	function submitPhotoUpload() {
-		if (photoInput?.files?.length) uploadForm?.requestSubmit();
+	function openUploadSettings() {
+		if (!photoInput?.files?.length) return;
+		uploadFileCount = photoInput.files.length;
+		if (uploadTargetInput) uploadTargetInput.value = '';
+		uploadSettingsDialog?.showModal();
+	}
+
+	function closeUploadSettings() {
+		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
+		if (photoInput) photoInput.value = '';
+		if (uploadTargetInput) uploadTargetInput.value = '';
+	}
+
+	function toggleFilterAll(event: Event) {
+		filterAll = (event.currentTarget as HTMLInputElement).checked;
+		if (filterAll) selectedStatuses.clear();
+	}
+
+	function toggleFilterStatus(event: Event, status: ResultStatus) {
+		const checked = (event.currentTarget as HTMLInputElement).checked;
+		filterAll = false;
+		if (checked) selectedStatuses.add(status);
+		else selectedStatuses.delete(status);
 	}
 
 	function warnBeforeUnload(event: BeforeUnloadEvent) {
@@ -73,6 +116,7 @@
 	const enhanceUpload: SubmitFunction = ({ formData }) => {
 		uploadPending = true;
 		uploadFileCount = formData.getAll('images').length;
+		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
 		uploadDialog?.showModal();
 		return async ({ update }) => {
 			try {
@@ -81,6 +125,7 @@
 				uploadPending = false;
 				if (uploadDialog?.open) uploadDialog.close();
 				if (photoInput) photoInput.value = '';
+				if (uploadTargetInput) uploadTargetInput.value = '';
 			}
 		};
 	};
@@ -234,7 +279,7 @@
 				<button class="button button-secondary" type="button" onclick={closeSelection}>취소</button>
 			{:else}
 				<form
-					bind:this={uploadForm}
+					id="photo-upload-form"
 					method="post"
 					action="?/upload"
 					enctype="multipart/form-data"
@@ -248,7 +293,7 @@
 						type="file"
 						accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
 						multiple
-						onchange={submitPhotoUpload}
+						onchange={openUploadSettings}
 					/>
 					<button
 						class="icon-button"
@@ -284,16 +329,33 @@
 				맞음 {data.latestResult.summary.correct} · 테스트 {data.latestResult.summary.tested} · 전체 {data
 					.latestResult.summary.total}
 			</p>
-			<label>
-				<span class="visually-hidden">최근 결과 필터</span>
-				<select class="filter-select" bind:value={filter} disabled={selectionMode}>
-					<option value="all">전체 단어</option>
-					<option value="correct">맞은 단어</option>
-					<option value="wrong">틀린 단어</option>
-					<option value="unknown">모르는 단어</option>
-					<option value="ambiguous">헷갈린 단어</option>
-				</select>
-			</label>
+			<details class="filter-menu" aria-disabled={selectionMode} inert={selectionMode}>
+				<summary class="filter-summary" aria-label={`최근 결과 필터: ${filterSummary}`}
+					>{filterSummary}</summary
+				>
+				<div class="filter-options">
+					<label class="filter-option">
+						<input
+							type="checkbox"
+							checked={filterAll}
+							disabled={selectionMode}
+							onchange={toggleFilterAll}
+						/>
+						전체 단어
+					</label>
+					{#each statusOptions as option (option.value)}
+						<label class="filter-option">
+							<input
+								type="checkbox"
+								checked={selectedStatuses.has(option.value)}
+								disabled={selectionMode}
+								onchange={(event) => toggleFilterStatus(event, option.value)}
+							/>
+							{option.label}
+						</label>
+					{/each}
+				</div>
+			</details>
 		</section>
 	{/if}
 
@@ -363,20 +425,72 @@
 	{:else}
 		<section class="empty-state" aria-labelledby="words-empty-title">
 			<div class="empty-state-mark" aria-hidden="true">＋</div>
-			<h2 id="words-empty-title">아직 단어가 없어요</h2>
+			<h2 id="words-empty-title">{filterAll ? '아직 단어가 없어요' : '표시할 단어가 없어요'}</h2>
 			<p>
-				{filter === 'all'
+				{filterAll
 					? '단어 사진을 추가하면 단어를 자동으로 읽어 정리합니다.'
-					: '이 필터에 해당하는 단어가 없습니다.'}
+					: selectedStatuses.size
+						? '이 결과에 해당하는 단어가 없습니다.'
+						: '결과를 하나 이상 선택해 주세요.'}
 			</p>
-			{#if filter === 'all'}<button
-					class="button button-primary"
-					type="button"
-					onclick={openPhotoPicker}>사진 추가하기</button
+			{#if filterAll}<button class="button button-primary" type="button" onclick={openPhotoPicker}
+					>사진 추가하기</button
 				>{/if}
 		</section>
 	{/if}
 </div>
+
+<dialog
+	bind:this={uploadSettingsDialog}
+	class="modal"
+	aria-labelledby="upload-settings-title"
+	oncancel={closeUploadSettings}
+>
+	<div class="modal-body">
+		<div class="modal-header">
+			<div>
+				<h2 id="upload-settings-title">사진 추가</h2>
+				<p>{uploadFileCount}장의 사진에서 단어를 추출합니다.</p>
+			</div>
+			<button
+				class="modal-close"
+				type="button"
+				aria-label="닫기"
+				title="닫기"
+				onclick={closeUploadSettings}>×</button
+			>
+		</div>
+
+		<div class="form-stack">
+			<div class="field">
+				<label for="upload-target">추출할 단어 수 (선택)</label>
+				<input
+					bind:this={uploadTargetInput}
+					id="upload-target"
+					name="targetWordCount"
+					form="photo-upload-form"
+					type="number"
+					min="1"
+					max={uploadFileCount * 500}
+					step="1"
+					inputmode="numeric"
+					placeholder="전체 추출"
+				/>
+				<p class="field-note">
+					비워 두면 사진에 보이는 단어를 모두 추출합니다. 최대 {uploadFileCount * 500}개
+				</p>
+			</div>
+			<div class="modal-actions">
+				<button class="button button-secondary" type="button" onclick={closeUploadSettings}
+					>취소</button
+				>
+				<button class="button button-primary" type="submit" form="photo-upload-form"
+					>사진 분석</button
+				>
+			</div>
+		</div>
+	</div>
+</dialog>
 
 <dialog
 	bind:this={uploadDialog}
