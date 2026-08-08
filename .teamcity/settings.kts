@@ -21,8 +21,8 @@ object VocanbBuildDeploy : BuildType({
 
     params {
         param("env.SERVICE_HOST", "10.255.255.254")
-        param("env.SERVICE_SSH_USER", "%service.ssh.user%")
-        param("env.SERVICE_SSH_KEY_PATH", "%service.ssh.key.path%")
+        param("env.SERVICE_SSH_USER", "Gom")
+        param("env.SERVICE_SSH_KEY_PATH", "/data/teamcity_agent/conf/vocanb_service_key")
     }
 
     steps {
