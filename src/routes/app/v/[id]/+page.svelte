@@ -298,18 +298,21 @@
 	{/if}
 
 	{#if data.vocabulary.images.length}
-		<div class="image-strip" aria-label="추가한 단어 사진">
-			{#each data.vocabulary.images as image (image.id)}
-				<div class="image-thumb">
-					<img
-						src={`/app/v/${data.vocabulary.id}/images/${image.id}`}
-						alt=""
-						onerror={imageError}
-					/>
-					<span class="broken-thumb" hidden aria-label="이미지를 불러오지 못했습니다.">!</span>
-				</div>
-			{/each}
-		</div>
+		<details>
+			<summary class="field-note">올린 사진 {data.vocabulary.images.length}장</summary>
+			<div class="image-strip" aria-label="추가한 단어 사진">
+				{#each data.vocabulary.images as image (image.id)}
+					<div class="image-thumb">
+						<img
+							src={`/app/v/${data.vocabulary.id}/images/${image.id}`}
+							alt=""
+							onerror={imageError}
+						/>
+						<span class="broken-thumb" hidden aria-label="이미지를 불러오지 못했습니다.">!</span>
+					</div>
+				{/each}
+			</div>
+		</details>
 	{/if}
 
 	{#if filteredWords.length}
