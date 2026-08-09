@@ -1571,13 +1571,17 @@ h2 {
 		display: grid;
 		gap: 8px;
 		width: 100%;
-		justify-content: flex-end;
 	}
 
 	.word-toolbar-group {
 		display: grid;
+		width: 100%;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 8px;
+	}
+
+	.word-toolbar-secondary-actions {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 
 	.word-toolbar-group form,
