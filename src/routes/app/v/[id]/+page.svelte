@@ -3,7 +3,8 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import { type ResultStatus, type Word } from '$lib/domain';
+	import { type Pronunciation, type ResultStatus, type Word } from '$lib/domain';
+	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	let { data, form } = $props();
@@ -25,11 +26,24 @@
 	let uploadError = $state('');
 	let uploadFileCount = $state(0);
 	let startPending = $state(false);
+	let testStart = $state(1);
+	let testEnd = $state(1);
 	let editPending = $state(false);
 	let deletePending = $state(false);
 	let bulkDeletePending = $state(false);
 	let selectionMode = $state(false);
 	let selectedWordIds = new SvelteSet<string>();
+	let pronunciationByWordKey = $state<Record<string, Pronunciation | null>>({});
+	let revealedPronunciations = new SvelteSet<string>();
+	let studySettingsDialog: HTMLDialogElement | undefined = $state();
+	let studyActive = $state(false);
+	let studyAll = $state(true);
+	let studyStart = $state(1);
+	let studyEnd = $state(1);
+	let studyMode = $state<'card' | 'list'>('card');
+	let studyIndex = $state(0);
+	let studyError = $state('');
+	const studyPageSize = 5;
 
 	const statusOptions: { value: ResultStatus; label: string }[] = [
 		{ value: 'correct', label: '맞은 단어' },
@@ -56,6 +70,33 @@
 						.join(' · ')
 				: '결과 선택 없음'
 	);
+	let studyWords = $derived(
+		data.vocabulary.words.filter(
+			(word) => studyAll || (word.number >= studyStart && word.number <= studyEnd)
+		)
+	);
+	let studyPage = $derived(Math.floor(studyIndex / studyPageSize));
+	let studyPageWords = $derived(
+		studyWords.slice(studyPage * studyPageSize, studyPage * studyPageSize + studyPageSize)
+	);
+	let studyPageCount = $derived(Math.max(1, Math.ceil(studyWords.length / studyPageSize)));
+	let studyCurrentWord = $derived(studyWords[studyIndex]);
+	let studyHasPrevious = $derived(studyIndex > 0);
+	let studyHasNext = $derived(
+		studyMode === 'card'
+			? studyIndex < studyWords.length - 1
+			: studyIndex + studyPageSize < studyWords.length
+	);
+	let pronunciationRequestKey = $derived(
+		JSON.stringify(
+			data.vocabulary.words
+				.filter((word) => word.pronunciation === undefined)
+				.map((word) => [word.id, word.english])
+		)
+	);
+	let pronunciationRequestWordIds = $derived(
+		data.vocabulary.words.filter((word) => word.pronunciation === undefined).map((word) => word.id)
+	);
 
 	function statusFor(wordId: string): ResultStatus | undefined {
 		return data.latestResult?.results[wordId] as ResultStatus | undefined;
@@ -69,13 +110,136 @@
 		if (leaveDialog?.open) leaveDialog.close();
 	}
 
-	function openTestSettings() {
-		if (data.vocabulary.words.length && testDialog) testDialog.showModal();
+	function openTestSettings(range?: { start: number; end: number }) {
+		if (!data.vocabulary.words.length || !testDialog) return;
+		const first = data.vocabulary.words[0].number;
+		const last = data.vocabulary.words.at(-1)!.number;
+		testStart = range?.start ?? first;
+		testEnd = range?.end ?? last;
+		testAll = !range;
+		testDialog.showModal();
 	}
 
 	function closeTestSettings() {
 		if (testDialog?.open) testDialog.close();
 	}
+
+	function openStudySettings() {
+		if (!data.vocabulary.words.length || !studySettingsDialog) return;
+		studyStart = data.vocabulary.words[0].number;
+		studyEnd = data.vocabulary.words.at(-1)!.number;
+		studyAll = true;
+		studyMode = 'card';
+		studyError = '';
+		studySettingsDialog.showModal();
+	}
+
+	function closeStudySettings() {
+		if (studySettingsDialog?.open) studySettingsDialog.close();
+	}
+
+	function startStudy(event: SubmitEvent) {
+		event.preventDefault();
+		const first = data.vocabulary.words[0]?.number ?? 1;
+		const last = data.vocabulary.words.at(-1)?.number ?? 1;
+		const start = studyAll ? first : Number(studyStart);
+		const end = studyAll ? last : Number(studyEnd);
+		if (
+			!Number.isInteger(start) ||
+			!Number.isInteger(end) ||
+			start < first ||
+			end > last ||
+			start > end
+		) {
+			studyError = `범위는 ${first}~${last} 안에서 선택해 주세요.`;
+			return;
+		}
+		studyStart = start;
+		studyEnd = end;
+		studyIndex = 0;
+		studyError = '';
+		studyActive = true;
+		closeStudySettings();
+	}
+
+	function exitStudy() {
+		studyActive = false;
+		studyIndex = 0;
+	}
+
+	function previousStudy() {
+		studyIndex = Math.max(0, studyIndex - (studyMode === 'card' ? 1 : studyPageSize));
+	}
+
+	function nextStudy() {
+		studyIndex = Math.min(
+			Math.max(0, studyWords.length - 1),
+			studyIndex + (studyMode === 'card' ? 1 : studyPageSize)
+		);
+	}
+
+	async function testStudyRange() {
+		if (!studyActive || !studyWords.length) return;
+		const range = studyAll ? undefined : { start: studyStart, end: studyEnd };
+		studyActive = false;
+		await tick();
+		openTestSettings(range);
+	}
+
+	function pronunciationKey(word: Pick<Word, 'id' | 'english'>) {
+		return JSON.stringify([word.id, word.english]);
+	}
+
+	function pronunciationFor(word: Word) {
+		return word.pronunciation === undefined
+			? pronunciationByWordKey[pronunciationKey(word)]
+			: word.pronunciation;
+	}
+
+	function togglePronunciation(wordId: string) {
+		if (revealedPronunciations.has(wordId)) revealedPronunciations.delete(wordId);
+		else revealedPronunciations.add(wordId);
+	}
+
+	async function loadPronunciations(wordIds: string[]) {
+		try {
+			const response = await fetch(
+				resolve('/app/v/[id]/pronunciation', { id: data.vocabulary.id }),
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ wordIds })
+				}
+			);
+			if (!response.ok) return;
+			const payload = (await response.json()) as {
+				pronunciations?: Record<string, { english: string; pronunciation: Pronunciation | null }>;
+			};
+			const additions = Object.fromEntries(
+				Object.entries(payload.pronunciations ?? {}).flatMap(([wordId, result]) => {
+					const word = data.vocabulary.words.find((candidate) => candidate.id === wordId);
+					return word && word.pronunciation === undefined && word.english === result.english
+						? [[pronunciationKey(word), result.pronunciation]]
+						: [];
+				})
+			) as Record<string, Pronunciation | null>;
+			pronunciationByWordKey = { ...pronunciationByWordKey, ...additions };
+		} catch {
+			// Pronunciation is optional; the word list remains useful when the service is unavailable.
+		}
+	}
+
+	async function loadPronunciationBatches(wordIds: string[]) {
+		for (let index = 0; index < wordIds.length; index += 32)
+			await loadPronunciations(wordIds.slice(index, index + 32));
+	}
+
+	let pronunciationRequestStarted = '';
+	$effect(() => {
+		if (!pronunciationRequestKey || pronunciationRequestKey === pronunciationRequestStarted) return;
+		pronunciationRequestStarted = pronunciationRequestKey;
+		void loadPronunciationBatches(pronunciationRequestWordIds);
+	});
 
 	function openPhotoPicker() {
 		photoInput?.click();
@@ -270,236 +434,415 @@
 </svelte:head>
 
 <div class="content-wrap">
-	<header class="page-header vocabulary-heading">
-		<div>
-			<p class="eyebrow">단어장</p>
-			<h1>{data.vocabulary.title}</h1>
-			<p class="page-description">
-				{#if data.vocabulary.rangeLabel}{data.vocabulary.rangeLabel} ·
-				{/if}{data.vocabulary.words.length}개 단어
-			</p>
-		</div>
-		<div class="button-row">
-			<button
-				class="button button-primary"
-				type="button"
-				disabled={!data.vocabulary.words.length}
-				aria-describedby={!data.vocabulary.words.length ? 'no-words-help' : undefined}
-				onclick={openTestSettings}
-			>
-				테스트
-			</button>
-			{#if !data.vocabulary.words.length}<span id="no-words-help" class="visually-hidden"
-					>단어를 먼저 추가해 주세요.</span
-				>{/if}
-		</div>
-	</header>
+	{#if studyActive}
+		<header class="study-header">
+			<div>
+				<p class="eyebrow">암기 모드 · {data.vocabulary.title}</p>
+				<h1 id="study-title">단어 암기</h1>
+				<p class="page-description">
+					{studyAll ? '전체 단어' : `${studyStart}~${studyEnd}번`} · {studyWords.length}개 · {studyMode ===
+					'card'
+						? '카드'
+						: '목록'}
+				</p>
+			</div>
+		</header>
 
-	{#if form?.message}
-		<p
-			class:message-status={form?.success}
-			class:message-error={!form?.success}
-			class="message"
-			role={form?.success ? 'status' : 'alert'}
-			aria-live="polite"
-		>
-			{form.message}
-		</p>
-	{/if}
-
-	<div class:selection-mode={selectionMode} class="word-toolbar">
-		<div class="word-toolbar-left">
-			<button
-				class="title-link"
-				type="button"
-				title="학습 종료"
-				onclick={() => leaveDialog?.showModal()}>{data.vocabulary.title}</button
-			>
-			<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
-		</div>
-		<div class="word-toolbar-right">
-			{#if selectionMode}
-				<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
-					>전체 선택</button
-				>
+		{#if studyMode === 'card'}
+			<section class="study-card-stage" aria-labelledby="study-title" aria-live="polite">
 				<button
-					class="button button-danger"
-					type="submit"
-					form="bulk-delete-form"
-					disabled={!selectedWordIds.size || bulkDeletePending}
-					>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
+					class="study-nav"
+					type="button"
+					disabled={!studyHasPrevious}
+					aria-label="이전 단어"
+					onclick={previousStudy}
 				>
-				<button class="button button-secondary" type="button" onclick={closeSelection}>취소</button>
+					<span aria-hidden="true">‹</span><span class="study-nav-label">이전</span>
+				</button>
+				{#if studyCurrentWord}
+					{@const pronunciation = pronunciationFor(studyCurrentWord)}
+					<article class="study-card">
+						<span class="study-number">{studyCurrentWord.number}번</span>
+						<div class="study-word-line">
+							<h2>{studyCurrentWord.english}</h2>
+							{#if pronunciation}<button
+									class:is-revealed={revealedPronunciations.has(studyCurrentWord.id)}
+									class="pronunciation-trigger"
+									type="button"
+									aria-label={`${studyCurrentWord.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
+									onclick={() => togglePronunciation(studyCurrentWord.id)}
+								>
+									<span class="pronunciation-ipa">{pronunciation.ipa}</span>
+									<span class="pronunciation-guide" aria-hidden="true">{pronunciation.guide}</span>
+								</button>{/if}
+						</div>
+						{#if studyCurrentWord.partOfSpeech}<span class="part-of-speech study-part-of-speech"
+								>{studyCurrentWord.partOfSpeech}</span
+							>{/if}
+						<p class="study-meaning">{studyCurrentWord.meaning}</p>
+						<div class="word-meta study-meta">
+							{#if imageNumberFor(studyCurrentWord.sourceImageId)}<span class="word-source"
+									>사진 {imageNumberFor(studyCurrentWord.sourceImageId)}</span
+								>{:else if studyCurrentWord.sourceImageId === null}<span
+									class="word-source is-manual">직접 입력</span
+								>{/if}
+							{#if studyCurrentWord.uncertain}<span class="word-status status-ambiguous"
+									>확인 필요</span
+								>{/if}
+							{#if statusFor(studyCurrentWord.id)}<span
+									class={`word-status status-${statusFor(studyCurrentWord.id)}`}
+									>{statusLabel(statusFor(studyCurrentWord.id)!)}</span
+								>{/if}
+						</div>
+					</article>
+				{/if}
+				<button
+					class="study-nav"
+					type="button"
+					disabled={!studyHasNext}
+					aria-label="다음 단어"
+					onclick={nextStudy}
+				>
+					<span class="study-nav-label">다음</span><span aria-hidden="true">›</span>
+				</button>
+			</section>
+		{:else}
+			<section class="study-list-stage" aria-labelledby="study-title" aria-live="polite">
+				<button
+					class="study-nav"
+					type="button"
+					disabled={!studyHasPrevious}
+					aria-label="이전 단어 목록"
+					onclick={previousStudy}
+				>
+					<span aria-hidden="true">‹</span><span class="study-nav-label">이전</span>
+				</button>
+				<div class="study-word-list">
+					{#each studyPageWords as word (word.id)}
+						{@const pronunciation = pronunciationFor(word)}
+						<div class="study-word-row">
+							<span class="word-number">{word.number}</span>
+							<div class="word-cell-content">
+								<div class="word-word-line">
+									<span class="word-english">{word.english}</span>
+									{#if pronunciation}<button
+											class:is-revealed={revealedPronunciations.has(word.id)}
+											class="pronunciation-trigger"
+											type="button"
+											aria-label={`${word.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
+											onclick={() => togglePronunciation(word.id)}
+										>
+											<span class="pronunciation-ipa">{pronunciation.ipa}</span>
+											<span class="pronunciation-guide" aria-hidden="true"
+												>{pronunciation.guide}</span
+											>
+										</button>{/if}
+								</div>
+								<div class="word-meta">
+									{#if imageNumberFor(word.sourceImageId)}<span class="word-source"
+											>사진 {imageNumberFor(word.sourceImageId)}</span
+										>{:else if word.sourceImageId === null}<span class="word-source is-manual"
+											>직접 입력</span
+										>{/if}
+									{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span
+										>{/if}
+									{#if statusFor(word.id)}<span class={`word-status status-${statusFor(word.id)}`}
+											>{statusLabel(statusFor(word.id)!)}</span
+										>{/if}
+								</div>
+							</div>
+							<span class="word-meaning"
+								>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
+									>{/if}{word.meaning}</span
+							>
+						</div>
+					{/each}
+				</div>
+				<button
+					class="study-nav"
+					type="button"
+					disabled={!studyHasNext}
+					aria-label="다음 단어 목록"
+					onclick={nextStudy}
+				>
+					<span class="study-nav-label">다음</span><span aria-hidden="true">›</span>
+				</button>
+			</section>
+		{/if}
+
+		<p class="study-page-status" aria-live="polite">
+			{#if studyMode === 'card'}
+				{studyIndex + 1}/{studyWords.length}번
 			{:else}
-				<button class="button button-secondary" type="button" onclick={() => openWordDialog()}
-					>＋ 단어 추가</button
+				{studyPage + 1}/{studyPageCount}쪽 · {studyPageWords.length}개
+			{/if}
+		</p>
+		<footer class="study-footer">
+			{#if !studyHasNext}<button
+					class="button button-secondary"
+					type="button"
+					onclick={testStudyRange}>이 범위 테스트하기</button
+				>{/if}
+			<button class="button button-quiet" type="button" onclick={exitStudy}>돌아가기</button>
+		</footer>
+	{:else}
+		<header class="page-header vocabulary-heading">
+			<div>
+				<p class="eyebrow">단어장</p>
+				<h1>{data.vocabulary.title}</h1>
+				<p class="page-description">
+					{#if data.vocabulary.rangeLabel}{data.vocabulary.rangeLabel} ·
+					{/if}{data.vocabulary.words.length}개 단어
+				</p>
+			</div>
+			<div class="button-row">
+				<button
+					class="button button-primary"
+					type="button"
+					disabled={!data.vocabulary.words.length}
+					aria-describedby={!data.vocabulary.words.length ? 'no-words-help' : undefined}
+					onclick={() => openTestSettings()}
 				>
-				<form
-					id="photo-upload-form"
-					method="post"
-					action="?/upload"
-					enctype="multipart/form-data"
-					use:enhance={enhanceUpload}
+					테스트
+				</button>
+				{#if !data.vocabulary.words.length}<span id="no-words-help" class="visually-hidden"
+						>단어를 먼저 추가해 주세요.</span
+					>{/if}
+			</div>
+		</header>
+
+		{#if form?.message}
+			<p
+				class:message-status={form?.success}
+				class:message-error={!form?.success}
+				class="message"
+				role={form?.success ? 'status' : 'alert'}
+				aria-live="polite"
+			>
+				{form.message}
+			</p>
+		{/if}
+
+		<div class:selection-mode={selectionMode} class="word-toolbar">
+			<div class="word-toolbar-left">
+				<button
+					class="title-link"
+					type="button"
+					title="학습 종료"
+					onclick={() => leaveDialog?.showModal()}>{data.vocabulary.title}</button
 				>
-					<input
-						bind:this={photoInput}
-						class="visually-hidden"
-						id="photo-upload"
-						name="images"
-						type="file"
-						accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-						multiple
-						onchange={openUploadSettings}
-					/>
+				<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
+			</div>
+			<div class="word-toolbar-right">
+				{#if selectionMode}
+					<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
+						>전체 선택</button
+					>
+					<button
+						class="button button-danger"
+						type="submit"
+						form="bulk-delete-form"
+						disabled={!selectedWordIds.size || bulkDeletePending}
+						>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
+					>
+					<button class="button button-secondary" type="button" onclick={closeSelection}
+						>취소</button
+					>
+				{:else}
+					<button class="button button-secondary" type="button" onclick={() => openWordDialog()}
+						>＋ 단어 추가</button
+					>
+					<form
+						id="photo-upload-form"
+						method="post"
+						action="?/upload"
+						enctype="multipart/form-data"
+						use:enhance={enhanceUpload}
+					>
+						<input
+							bind:this={photoInput}
+							class="visually-hidden"
+							id="photo-upload"
+							name="images"
+							type="file"
+							accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+							multiple
+							onchange={openUploadSettings}
+						/>
+						<button
+							class="button button-secondary"
+							type="button"
+							aria-label="단어 사진 추가"
+							onclick={openPhotoPicker}
+							disabled={uploadPending}
+						>
+							{uploadPending ? '분석 중…' : '＋ 사진 추가'}
+						</button>
+					</form>
 					<button
 						class="button button-secondary"
 						type="button"
-						aria-label="단어 사진 추가"
-						onclick={openPhotoPicker}
-						disabled={uploadPending}
+						disabled={!data.vocabulary.words.length}
+						title="단어 일괄 삭제"
+						onclick={() => (selectionMode = true)}>선택</button
 					>
-						{uploadPending ? '분석 중…' : '＋ 사진 추가'}
-					</button>
-				</form>
-				<button
-					class="button button-secondary"
-					type="button"
-					disabled={!data.vocabulary.words.length}
-					title="단어 일괄 삭제"
-					onclick={() => (selectionMode = true)}>선택</button
-				>
-				<button
-					class="button button-secondary"
-					type="button"
-					disabled={!data.vocabulary.words.length}
-					onclick={openTestSettings}>테스트</button
-				>
-			{/if}
+					<button
+						class="button button-secondary"
+						type="button"
+						disabled={!data.vocabulary.words.length}
+						onclick={() => openTestSettings()}>테스트</button
+					>
+					<button
+						class="button button-secondary"
+						type="button"
+						disabled={!data.vocabulary.words.length}
+						onclick={openStudySettings}>암기 모드</button
+					>
+				{/if}
+			</div>
 		</div>
-	</div>
 
-	{#if data.latestResult}
-		<section class="result-strip" aria-label="최근 테스트 결과">
-			<p class="result-summary">
-				맞음 {data.latestResult.summary.correct} · 테스트 {data.latestResult.summary.tested} · 전체 {data
-					.latestResult.summary.total}
-			</p>
-			<details class="filter-menu" aria-disabled={selectionMode} inert={selectionMode}>
-				<summary class="filter-summary" aria-label={`최근 결과 필터: ${filterSummary}`}
-					>{filterSummary}</summary
-				>
-				<div class="filter-options">
-					<label class="filter-option">
-						<input
-							type="checkbox"
-							checked={filterAll}
-							disabled={selectionMode}
-							onchange={toggleFilterAll}
-						/>
-						전체 단어
-					</label>
-					{#each statusOptions as option (option.value)}
+		{#if data.latestResult}
+			<section class="result-strip" aria-label="최근 테스트 결과">
+				<p class="result-summary">
+					맞음 {data.latestResult.summary.correct} · 테스트 {data.latestResult.summary.tested} · 전체
+					{data.latestResult.summary.total}
+				</p>
+				<details class="filter-menu" aria-disabled={selectionMode} inert={selectionMode}>
+					<summary class="filter-summary" aria-label={`최근 결과 필터: ${filterSummary}`}
+						>{filterSummary}</summary
+					>
+					<div class="filter-options">
 						<label class="filter-option">
 							<input
 								type="checkbox"
-								checked={selectedStatuses.has(option.value)}
+								checked={filterAll}
 								disabled={selectionMode}
-								onchange={(event) => toggleFilterStatus(event, option.value)}
+								onchange={toggleFilterAll}
 							/>
-							{option.label}
+							전체 단어
 						</label>
+						{#each statusOptions as option (option.value)}
+							<label class="filter-option">
+								<input
+									type="checkbox"
+									checked={selectedStatuses.has(option.value)}
+									disabled={selectionMode}
+									onchange={(event) => toggleFilterStatus(event, option.value)}
+								/>
+								{option.label}
+							</label>
+						{/each}
+					</div>
+				</details>
+			</section>
+		{/if}
+
+		{#if data.vocabulary.images.length}
+			<details>
+				<summary class="field-note photo-summary"
+					>원본 사진 {data.vocabulary.images.length}장 · 단어 목록의 사진 번호와 연결됩니다.</summary
+				>
+				<div class="image-strip" aria-label="추가한 단어 사진">
+					{#each data.vocabulary.images as image, index (image.id)}
+						<div class="image-thumb" aria-label={`사진 ${index + 1}`}>
+							<img
+								src={`/app/v/${data.vocabulary.id}/images/${image.id}`}
+								alt={`사진 ${index + 1}`}
+								onerror={imageError}
+							/>
+							<span class="broken-thumb" hidden aria-label="이미지를 불러오지 못했습니다.">!</span>
+							<span class="image-number" aria-hidden="true">사진 {index + 1}</span>
+						</div>
 					{/each}
 				</div>
 			</details>
-		</section>
-	{/if}
+		{/if}
 
-	{#if data.vocabulary.images.length}
-		<details>
-			<summary class="field-note photo-summary"
-				>원본 사진 {data.vocabulary.images.length}장 · 단어 목록의 사진 번호와 연결됩니다.</summary
+		{#if filteredWords.length}
+			<form
+				id="bulk-delete-form"
+				method="post"
+				action="?/deleteWords"
+				use:enhance={enhanceDeleteWords}
+				onsubmit={confirmDeleteWords}
 			>
-			<div class="image-strip" aria-label="추가한 단어 사진">
-				{#each data.vocabulary.images as image, index (image.id)}
-					<div class="image-thumb" aria-label={`사진 ${index + 1}`}>
-						<img
-							src={`/app/v/${data.vocabulary.id}/images/${image.id}`}
-							alt={`사진 ${index + 1}`}
-							onerror={imageError}
-						/>
-						<span class="broken-thumb" hidden aria-label="이미지를 불러오지 못했습니다.">!</span>
-						<span class="image-number" aria-hidden="true">사진 {index + 1}</span>
-					</div>
-				{/each}
-			</div>
-		</details>
-	{/if}
-
-	{#if filteredWords.length}
-		<form
-			id="bulk-delete-form"
-			method="post"
-			action="?/deleteWords"
-			use:enhance={enhanceDeleteWords}
-			onsubmit={confirmDeleteWords}
-		>
-			<section class:word-list-selecting={selectionMode} class="word-list" aria-label="단어 목록">
-				{#each filteredWords as word (word.id)}
-					{@const status = statusFor(word.id)}
-					<div class="word-row">
-						{#if selectionMode}<label class="word-select" aria-label={`${word.english} 선택`}>
-								<input
-									type="checkbox"
-									name="wordIds"
-									value={word.id}
-									checked={selectedWordIds.has(word.id)}
-									onchange={(event) => toggleWordSelection(event, word.id)}
-								/>
-							</label>{/if}
-						<span class="word-number">{word.number}</span>
-						<div class="word-cell-content">
-							<span class="word-english">{word.english}</span>
-							{#if imageNumberFor(word.sourceImageId)}<span class="word-source"
-									>사진 {imageNumberFor(word.sourceImageId)}</span
-								>{:else if word.sourceImageId === null}<span class="word-source is-manual"
-									>직접 입력</span
-								>{/if}
-							{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span>{/if}
-							{#if status}<span
-									class={`word-status status-${status}`}
-									title={`최근 결과: ${statusLabel(status)}`}>{statusLabel(status)}</span
-								>{/if}
+				<section class:word-list-selecting={selectionMode} class="word-list" aria-label="단어 목록">
+					{#each filteredWords as word (word.id)}
+						{@const status = statusFor(word.id)}
+						{@const pronunciation = pronunciationFor(word)}
+						<div class="word-row">
+							{#if selectionMode}<label class="word-select" aria-label={`${word.english} 선택`}>
+									<input
+										type="checkbox"
+										name="wordIds"
+										value={word.id}
+										checked={selectedWordIds.has(word.id)}
+										onchange={(event) => toggleWordSelection(event, word.id)}
+									/>
+								</label>{/if}
+							<span class="word-number">{word.number}</span>
+							<div class="word-cell-content">
+								<div class="word-word-line">
+									<span class="word-english">{word.english}</span>
+									{#if pronunciation}<button
+											class:is-revealed={revealedPronunciations.has(word.id)}
+											class="pronunciation-trigger"
+											type="button"
+											aria-label={`${word.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
+											onclick={() => togglePronunciation(word.id)}
+										>
+											<span class="pronunciation-ipa">{pronunciation.ipa}</span>
+											<span class="pronunciation-guide" aria-hidden="true"
+												>{pronunciation.guide}</span
+											>
+										</button>{/if}
+								</div>
+								<div class="word-meta">
+									{#if imageNumberFor(word.sourceImageId)}<span class="word-source"
+											>사진 {imageNumberFor(word.sourceImageId)}</span
+										>{:else if word.sourceImageId === null}<span class="word-source is-manual"
+											>직접 입력</span
+										>{/if}
+									{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span
+										>{/if}
+									{#if status}<span
+											class={`word-status status-${status}`}
+											title={`최근 결과: ${statusLabel(status)}`}>{statusLabel(status)}</span
+										>{/if}
+								</div>
+							</div>
+							<span class="word-meaning"
+								>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
+									>{/if}{word.meaning}</span
+							>
+							<button
+								class="word-edit"
+								type="button"
+								disabled={selectionMode}
+								onclick={() => openWordDialog(word)}
+								aria-label={`${word.english} 단어 편집`}>편집</button
+							>
 						</div>
-						<span class="word-meaning"
-							>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
-								>{/if}{word.meaning}</span
-						>
-						<button
-							class="word-edit"
-							type="button"
-							disabled={selectionMode}
-							onclick={() => openWordDialog(word)}
-							aria-label={`${word.english} 단어 편집`}>편집</button
-						>
-					</div>
-				{/each}
+					{/each}
+				</section>
+			</form>
+		{:else}
+			<section class="empty-state" aria-labelledby="words-empty-title">
+				<div class="empty-state-mark" aria-hidden="true">＋</div>
+				<h2 id="words-empty-title">{filterAll ? '아직 단어가 없어요' : '표시할 단어가 없어요'}</h2>
+				<p>
+					{filterAll
+						? '단어 사진을 추가하면 단어를 자동으로 읽어 정리합니다.'
+						: selectedStatuses.size
+							? '이 결과에 해당하는 단어가 없습니다.'
+							: '결과를 하나 이상 선택해 주세요.'}
+				</p>
+				{#if filterAll}<button class="button button-primary" type="button" onclick={openPhotoPicker}
+						>사진 추가하기</button
+					>{/if}
 			</section>
-		</form>
-	{:else}
-		<section class="empty-state" aria-labelledby="words-empty-title">
-			<div class="empty-state-mark" aria-hidden="true">＋</div>
-			<h2 id="words-empty-title">{filterAll ? '아직 단어가 없어요' : '표시할 단어가 없어요'}</h2>
-			<p>
-				{filterAll
-					? '단어 사진을 추가하면 단어를 자동으로 읽어 정리합니다.'
-					: selectedStatuses.size
-						? '이 결과에 해당하는 단어가 없습니다.'
-						: '결과를 하나 이상 선택해 주세요.'}
-			</p>
-			{#if filterAll}<button class="button button-primary" type="button" onclick={openPhotoPicker}
-					>사진 추가하기</button
-				>{/if}
-		</section>
+		{/if}
 	{/if}
 </div>
 
@@ -618,7 +961,7 @@
 							type="number"
 							min={data.vocabulary.words[0]?.number ?? 1}
 							max={data.vocabulary.words.at(-1)?.number ?? 1}
-							value={data.vocabulary.words[0]?.number ?? 1}
+							bind:value={testStart}
 							disabled={testAll}
 						/>
 					</div>
@@ -630,7 +973,7 @@
 							type="number"
 							min={data.vocabulary.words[0]?.number ?? 1}
 							max={data.vocabulary.words.at(-1)?.number ?? 1}
-							value={data.vocabulary.words.at(-1)?.number ?? 1}
+							bind:value={testEnd}
 							disabled={testAll}
 						/>
 					</div>
@@ -673,6 +1016,75 @@
 				<button class="button button-primary" type="submit" disabled={startPending}
 					>{startPending ? '준비 중…' : '테스트 시작'}</button
 				>
+			</div>
+		</form>
+	</div>
+</dialog>
+
+<dialog bind:this={studySettingsDialog} class="modal" aria-labelledby="study-settings-title">
+	<div class="modal-body">
+		<div class="modal-header">
+			<div>
+				<h2 id="study-settings-title">암기 모드</h2>
+				<p>복습할 범위와 화면 방식을 정해 보세요.</p>
+			</div>
+			<button
+				class="modal-close"
+				type="button"
+				aria-label="닫기"
+				title="닫기"
+				onclick={closeStudySettings}>×</button
+			>
+		</div>
+
+		<form class="form-stack" onsubmit={startStudy}>
+			<fieldset class="choice-group">
+				<legend>범위</legend>
+				<label class="choice"><input type="checkbox" bind:checked={studyAll} /> 전체 단어</label>
+				<div class="choice-options">
+					<div class="field">
+						<label for="study-start">시작 번호</label>
+						<input
+							id="study-start"
+							type="number"
+							min={data.vocabulary.words[0]?.number ?? 1}
+							max={data.vocabulary.words.at(-1)?.number ?? 1}
+							bind:value={studyStart}
+							disabled={studyAll}
+						/>
+					</div>
+					<div class="field">
+						<label for="study-end">끝 번호</label>
+						<input
+							id="study-end"
+							type="number"
+							min={data.vocabulary.words[0]?.number ?? 1}
+							max={data.vocabulary.words.at(-1)?.number ?? 1}
+							bind:value={studyEnd}
+							disabled={studyAll}
+						/>
+					</div>
+				</div>
+			</fieldset>
+
+			<fieldset class="choice-group">
+				<legend>화면 방식</legend>
+				<div class="choice-options">
+					<label class="choice"
+						><input type="radio" bind:group={studyMode} value="card" /> 카드</label
+					>
+					<label class="choice"
+						><input type="radio" bind:group={studyMode} value="list" /> 목록 (최대 5개)</label
+					>
+				</div>
+			</fieldset>
+
+			{#if studyError}<p class="message message-error" role="alert">{studyError}</p>{/if}
+			<div class="modal-actions">
+				<button class="button button-secondary" type="button" onclick={closeStudySettings}
+					>취소</button
+				>
+				<button class="button button-primary" type="submit">암기 시작</button>
 			</div>
 		</form>
 	</div>

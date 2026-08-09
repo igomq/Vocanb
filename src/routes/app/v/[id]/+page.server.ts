@@ -245,6 +245,7 @@ export const actions: Actions = {
 					english,
 					meaning,
 					partOfSpeech,
+					pronunciation: undefined,
 					uncertain: false,
 					updatedAt: new Date().toISOString()
 				});

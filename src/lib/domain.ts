@@ -4,6 +4,14 @@ export const resultStatuses = ['correct', 'wrong', 'unknown', 'ambiguous'] as co
 export const ResultStatusSchema = z.enum(resultStatuses);
 export type ResultStatus = z.infer<typeof ResultStatusSchema>;
 
+export const PronunciationSchema = z
+	.object({
+		ipa: z.string().trim().min(1).max(100),
+		guide: z.string().trim().min(1).max(100)
+	})
+	.strict();
+export type Pronunciation = z.infer<typeof PronunciationSchema>;
+
 export const WordSchema = z
 	.object({
 		id: z.string().uuid(),
@@ -11,6 +19,7 @@ export const WordSchema = z
 		english: z.string().trim().min(1).max(300),
 		meaning: z.string().trim().min(1).max(1000),
 		partOfSpeech: z.string().trim().min(1).max(30).optional(),
+		pronunciation: PronunciationSchema.nullable().optional(),
 		sourceImageId: z.string().uuid().nullable(),
 		uncertain: z.boolean().default(false),
 		createdAt: z.string(),

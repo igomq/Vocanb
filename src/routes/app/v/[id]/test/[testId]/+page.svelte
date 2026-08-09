@@ -160,12 +160,19 @@
 	</section>
 
 	<footer class="test-footer">
-		<button class="button button-quiet" type="button" onclick={openLeaveDialog}>나가기</button>
-		<div class="button-row">
-			{#if !completeReady && !completed}<span id="complete-help" class="field-note"
-					>모든 단어를 평가하면 완료할 수 있어요.</span
-				>{/if}
-			<form method="post" action="?/complete" use:enhance={enhanceComplete}>
+		<div class="test-exit">
+			<button class="button button-quiet" type="button" onclick={openLeaveDialog}>나가기</button>
+		</div>
+		<div class="test-completion">
+			{#if !completeReady && !completed}<p id="complete-help" class="field-note">
+					모든 단어를 평가하면 완료할 수 있어요.
+				</p>{/if}
+			<form
+				class="test-complete-form"
+				method="post"
+				action="?/complete"
+				use:enhance={enhanceComplete}
+			>
 				<button
 					class="button button-primary"
 					type="submit"
