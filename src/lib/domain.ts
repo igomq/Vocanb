@@ -4,13 +4,20 @@ export const resultStatuses = ['correct', 'wrong', 'unknown', 'ambiguous'] as co
 export const ResultStatusSchema = z.enum(resultStatuses);
 export type ResultStatus = z.infer<typeof ResultStatusSchema>;
 
+export const PRONUNCIATION_GUIDE_VERSION = 2;
+
 export const PronunciationSchema = z
 	.object({
 		ipa: z.string().trim().min(1).max(100),
-		guide: z.string().trim().min(1).max(100)
+		guide: z.string().trim().min(1).max(100),
+		guideVersion: z.number().int().positive().max(100).optional()
 	})
 	.strict();
 export type Pronunciation = z.infer<typeof PronunciationSchema>;
+
+export function needsPronunciationGuideRefresh(pronunciation: Pronunciation | null | undefined) {
+	return pronunciation !== null && pronunciation?.guideVersion !== PRONUNCIATION_GUIDE_VERSION;
+}
 
 export const WordSchema = z
 	.object({

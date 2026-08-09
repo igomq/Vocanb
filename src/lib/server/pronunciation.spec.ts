@@ -3,6 +3,8 @@ import {
 	applyPronunciationResults,
 	ipaToKorean,
 	lookupPronunciation,
+	parsePronunciationGuides,
+	resolvePronunciationLookup,
 	type PronunciationLookup
 } from './pronunciation';
 
@@ -22,6 +24,7 @@ describe('pronunciation lookup', () => {
 
 		expect(await lookupPronunciation('apple')).toEqual({ ipa: '[ˈæpəl]', guide: '애플' });
 		expect(ipaToKorean('/ˈkæt/')).toBe('캣');
+		expect(ipaToKorean('/ˈkɝːtiəs/')).toBe('커티어스');
 	});
 
 	it('treats a missing dictionary entry as a normal fallback', async () => {
@@ -43,5 +46,52 @@ describe('pronunciation lookup', () => {
 
 		expect(words[0].pronunciation).toBeUndefined();
 		expect(words[1].pronunciation).toBeNull();
+	});
+
+	it('strictly matches natural Korean guides by stable input id', () => {
+		const candidates = [{ id: 'courteous', english: 'courteous', ipa: '[ˈkɝːtiəs]' }];
+		expect(
+			parsePronunciationGuides({ guides: [{ id: 'courteous', guide: '커티어스' }] }, candidates)
+		).toEqual(new Map([['courteous', '커티어스']]));
+		expect(
+			parsePronunciationGuides({ guides: [{ id: 'other', guide: '커티어스' }] }, candidates)
+		).toBeNull();
+		expect(
+			parsePronunciationGuides(
+				{ guides: [{ id: 'courteous', guide: '커티어스 (courteous)' }] },
+				candidates
+			)
+		).toBeNull();
+	});
+
+	it('upgrades stale guides and preserves them when AI is unavailable', () => {
+		const word = {
+			id: 'courteous',
+			english: 'courteous',
+			pronunciation: { ipa: '[ˈkɝːtiəs]', guide: '티엇' }
+		};
+		const dictionary = { ipa: '[ˈkɝːtiəs]', guide: '커티어스' };
+		const upgraded = resolvePronunciationLookup(word, dictionary, '커티어스');
+		expect(upgraded.persist?.pronunciation).toMatchObject({
+			ipa: dictionary.ipa,
+			guide: '커티어스',
+			guideVersion: 2
+		});
+		const stale = { ...word };
+		applyPronunciationResults([stale], new Map([['courteous', upgraded.persist!]]));
+		expect(stale.pronunciation).toMatchObject({ guide: '커티어스', guideVersion: 2 });
+		expect(resolvePronunciationLookup(word, dictionary)).toEqual({});
+	});
+
+	it('keeps a local guide as an unpersisted fallback for a new word', () => {
+		const result = resolvePronunciationLookup(
+			{ english: 'apple', pronunciation: undefined },
+			{ ipa: '[ˈæpəl]', guide: '애플' }
+		);
+		expect(result.result).toEqual({
+			english: 'apple',
+			pronunciation: { ipa: '[ˈæpəl]', guide: '애플' }
+		});
+		expect(result.persist).toBeUndefined();
 	});
 });

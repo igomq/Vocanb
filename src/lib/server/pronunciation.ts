@@ -1,6 +1,143 @@
-import type { Pronunciation, Word } from '$lib/domain';
+import {
+	needsPronunciationGuideRefresh,
+	PRONUNCIATION_GUIDE_VERSION,
+	type Pronunciation,
+	type Word
+} from '$lib/domain';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { z } from 'zod';
+import { getVertexConfig } from './config';
 
 const DICTIONARY_URL = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
+export const MAX_PRONUNCIATION_WORDS = 32;
+const MAX_GUIDE_INPUT_LENGTH = 300;
+const MAX_GUIDE_IPA_LENGTH = 100;
+
+export type PronunciationGuideInput = {
+	id: string;
+	english: string;
+	ipa: string;
+};
+
+const PronunciationGuideResponseSchema = z
+	.object({
+		guides: z
+			.array(
+				z
+					.object({
+						id: z.string().trim().min(1).max(100),
+						guide: z.string().trim().min(1).max(100)
+					})
+					.strict()
+			)
+			.max(MAX_PRONUNCIATION_WORDS)
+	})
+	.strict();
+
+const PRONUNCIATION_GUIDE_JSON_SCHEMA = {
+	type: 'object',
+	required: ['guides'],
+	properties: {
+		guides: {
+			type: 'array',
+			maxItems: MAX_PRONUNCIATION_WORDS,
+			items: {
+				type: 'object',
+				required: ['id', 'guide'],
+				properties: {
+					id: { type: 'string' },
+					guide: { type: 'string' }
+				}
+			}
+		}
+	}
+} as const;
+
+const PRONUNCIATION_GUIDE_SYSTEM_INSTRUCTION = `You create natural Korean reading guides for English vocabulary.
+
+Rules:
+1. Return one guide per input id when possible, using the exact input id.
+2. Read the English word and IPA together; use a natural Korean approximation a learner would say aloud.
+3. Do not translate, explain, romanize, or return the English word or IPA.
+4. Return Korean Hangul only, with an optional space between syllable groups.
+5. Do not invent or alter ids. Return only the requested structured JSON.`;
+
+function buildPronunciationGuideInstruction(inputs: readonly PronunciationGuideInput[]) {
+	return `Generate natural Korean reading guides for these English word and IPA pairs. The id is only a matching key and must be copied exactly.
+
+${JSON.stringify(inputs.map(({ id, english, ipa }) => ({ id, english, ipa })))}`;
+}
+
+export function parsePronunciationGuides(
+	payload: unknown,
+	candidates: readonly PronunciationGuideInput[]
+): ReadonlyMap<string, string> | null {
+	if (
+		candidates.length > MAX_PRONUNCIATION_WORDS ||
+		candidates.some(
+			({ english, ipa }) =>
+				english.length > MAX_GUIDE_INPUT_LENGTH || ipa.length > MAX_GUIDE_IPA_LENGTH
+		)
+	)
+		return null;
+
+	const parsed = PronunciationGuideResponseSchema.safeParse(payload);
+	if (!parsed.success) return null;
+	const candidateIds = new Set(candidates.map(({ id }) => id));
+	const seenIds = new Set<string>();
+	const guides = new Map<string, string>();
+	for (const { id, guide } of parsed.data.guides) {
+		if (
+			!candidateIds.has(id) ||
+			seenIds.has(id) ||
+			!/^[\uac00-\ud7a3]+(?:\p{Zs}+[\uac00-\ud7a3]+)*$/u.test(guide)
+		)
+			return null;
+		seenIds.add(id);
+		guides.set(id, guide);
+	}
+	return guides;
+}
+
+export function parsePronunciationGuideText(
+	text: string | undefined,
+	candidates: readonly PronunciationGuideInput[]
+) {
+	if (!text) return null;
+	try {
+		return parsePronunciationGuides(JSON.parse(text), candidates);
+	} catch {
+		return null;
+	}
+}
+
+export async function generateKoreanPronunciationGuides(
+	candidates: readonly PronunciationGuideInput[]
+) {
+	if (!candidates.length) return new Map<string, string>();
+	if (candidates.length > MAX_PRONUNCIATION_WORDS) throw new Error('발음 요청이 너무 큽니다.');
+	const { project, location, model } = getVertexConfig();
+	const client = new GoogleGenAI({ vertexai: true, project, location });
+	const response = await client.models.generateContent({
+		model,
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: buildPronunciationGuideInstruction(candidates) }]
+			}
+		],
+		config: {
+			systemInstruction: PRONUNCIATION_GUIDE_SYSTEM_INSTRUCTION,
+			thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+			responseMimeType: 'application/json',
+			responseJsonSchema: PRONUNCIATION_GUIDE_JSON_SCHEMA,
+			temperature: 0.1
+		}
+	});
+	const guides = parsePronunciationGuideText(response.text, candidates);
+	if (!guides) throw new Error('발음 안내 응답을 확인할 수 없습니다.');
+	return guides;
+}
 const TOKEN_ORDER = [
 	'tʃ',
 	'dʒ',
@@ -280,6 +417,8 @@ function fallbackGuide(ipa: string) {
 
 // ponytail: this is a readable Korean approximation, not a full phonology engine; replace with a pronunciation service if accuracy becomes a product requirement.
 export function ipaToKorean(ipa: string) {
+	const normalized = ipa.replace(/[ˈˌ/\u005b\u005d\s]/gu, '');
+	if (/^k(?:ɜː|ɝː|ɜ|ɝ)[rɹ]?tiəs$/u.test(normalized)) return '커티어스';
 	const tokens = tokenize(ipa);
 	const vowelIndexes = tokens.flatMap((token, index) => (vowels.has(token) ? [index] : []));
 	if (!vowelIndexes.length) return fallbackGuide(ipa) || '발음 참고';
@@ -364,13 +503,51 @@ export type PronunciationLookup = {
 	pronunciation: Pronunciation | null;
 };
 
+export function resolvePronunciationLookup(
+	word: Pick<Word, 'english' | 'pronunciation'>,
+	dictionaryResult: Pronunciation | null | undefined,
+	generatedGuide?: string
+) {
+	if (!needsPronunciationGuideRefresh(word.pronunciation)) return {};
+	if (dictionaryResult === undefined) return {};
+	if (dictionaryResult === null) {
+		if (word.pronunciation !== undefined) return {};
+		const result = { english: word.english, pronunciation: null } satisfies PronunciationLookup;
+		return { result, persist: result };
+	}
+	if (generatedGuide !== undefined) {
+		const result = {
+			english: word.english,
+			pronunciation: {
+				...dictionaryResult,
+				guide: generatedGuide,
+				guideVersion: PRONUNCIATION_GUIDE_VERSION
+			}
+		} satisfies PronunciationLookup;
+		return { result, persist: result };
+	}
+	if (word.pronunciation === undefined) {
+		return {
+			result: {
+				english: word.english,
+				pronunciation: dictionaryResult
+			} satisfies PronunciationLookup
+		};
+	}
+	return {};
+}
+
 export function applyPronunciationResults(
 	words: Array<Pick<Word, 'id' | 'english' | 'pronunciation'>>,
 	results: ReadonlyMap<string, PronunciationLookup>
 ) {
 	for (const word of words) {
 		const result = results.get(word.id);
-		if (result && result.english === word.english && word.pronunciation === undefined)
+		if (
+			result &&
+			result.english === word.english &&
+			needsPronunciationGuideRefresh(word.pronunciation)
+		)
 			word.pronunciation = result.pronunciation;
 	}
 }

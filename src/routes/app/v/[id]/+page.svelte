@@ -3,7 +3,12 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import { type Pronunciation, type ResultStatus, type Word } from '$lib/domain';
+	import {
+		needsPronunciationGuideRefresh,
+		type Pronunciation,
+		type ResultStatus,
+		type Word
+	} from '$lib/domain';
 	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
@@ -34,7 +39,7 @@
 	let selectionMode = $state(false);
 	let selectedWordIds = new SvelteSet<string>();
 	let pronunciationByWordKey = $state<Record<string, Pronunciation | null>>({});
-	let revealedPronunciations = new SvelteSet<string>();
+	let revealedPronunciation = $state<string | null>(null);
 	let studySettingsDialog: HTMLDialogElement | undefined = $state();
 	let studyActive = $state(false);
 	let studyAll = $state(true);
@@ -90,12 +95,14 @@
 	let pronunciationRequestKey = $derived(
 		JSON.stringify(
 			data.vocabulary.words
-				.filter((word) => word.pronunciation === undefined)
+				.filter((word) => needsPronunciationGuideRefresh(word.pronunciation))
 				.map((word) => [word.id, word.english])
 		)
 	);
 	let pronunciationRequestWordIds = $derived(
-		data.vocabulary.words.filter((word) => word.pronunciation === undefined).map((word) => word.id)
+		data.vocabulary.words
+			.filter((word) => needsPronunciationGuideRefresh(word.pronunciation))
+			.map((word) => word.id)
 	);
 
 	function statusFor(wordId: string): ResultStatus | undefined {
@@ -158,20 +165,24 @@
 		studyEnd = end;
 		studyIndex = 0;
 		studyError = '';
+		closePronunciation();
 		studyActive = true;
 		closeStudySettings();
 	}
 
 	function exitStudy() {
+		closePronunciation();
 		studyActive = false;
 		studyIndex = 0;
 	}
 
 	function previousStudy() {
+		closePronunciation();
 		studyIndex = Math.max(0, studyIndex - (studyMode === 'card' ? 1 : studyPageSize));
 	}
 
 	function nextStudy() {
+		closePronunciation();
 		studyIndex = Math.min(
 			Math.max(0, studyWords.length - 1),
 			studyIndex + (studyMode === 'card' ? 1 : studyPageSize)
@@ -191,15 +202,34 @@
 	}
 
 	function pronunciationFor(word: Word) {
-		return word.pronunciation === undefined
-			? pronunciationByWordKey[pronunciationKey(word)]
+		const key = pronunciationKey(word);
+		return Object.hasOwn(pronunciationByWordKey, key)
+			? pronunciationByWordKey[key]
 			: word.pronunciation;
 	}
 
-	function togglePronunciation(wordId: string) {
-		if (revealedPronunciations.has(wordId)) revealedPronunciations.delete(wordId);
-		else revealedPronunciations.add(wordId);
+	function closePronunciation() {
+		revealedPronunciation = null;
 	}
+
+	function togglePronunciation(wordId: string) {
+		revealedPronunciation = revealedPronunciation === wordId ? null : wordId;
+	}
+
+	$effect(() => {
+		const closeOnDocumentClick = (event: MouseEvent) => {
+			if (!(event.target instanceof Element) || !event.target.closest('.pronunciation-trigger'))
+				closePronunciation();
+		};
+		const closeOnScroll = () => closePronunciation();
+		const scrollOptions = { capture: true, passive: true };
+		document.addEventListener('click', closeOnDocumentClick);
+		document.addEventListener('scroll', closeOnScroll, scrollOptions);
+		return () => {
+			document.removeEventListener('click', closeOnDocumentClick);
+			document.removeEventListener('scroll', closeOnScroll, scrollOptions);
+		};
+	});
 
 	async function loadPronunciations(wordIds: string[]) {
 		try {
@@ -218,7 +248,9 @@
 			const additions = Object.fromEntries(
 				Object.entries(payload.pronunciations ?? {}).flatMap(([wordId, result]) => {
 					const word = data.vocabulary.words.find((candidate) => candidate.id === wordId);
-					return word && word.pronunciation === undefined && word.english === result.english
+					return word &&
+						needsPronunciationGuideRefresh(word.pronunciation) &&
+						word.english === result.english
 						? [[pronunciationKey(word), result.pronunciation]]
 						: [];
 				})
@@ -466,10 +498,13 @@
 						<div class="study-word-line">
 							<h2>{studyCurrentWord.english}</h2>
 							{#if pronunciation}<button
-									class:is-revealed={revealedPronunciations.has(studyCurrentWord.id)}
+									class:is-revealed={revealedPronunciation === studyCurrentWord.id}
 									class="pronunciation-trigger"
 									type="button"
+									aria-expanded={revealedPronunciation === studyCurrentWord.id}
 									aria-label={`${studyCurrentWord.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
+									onpointerenter={closePronunciation}
+									onfocus={closePronunciation}
 									onclick={() => togglePronunciation(studyCurrentWord.id)}
 								>
 									<span class="pronunciation-ipa">{pronunciation.ipa}</span>
@@ -480,20 +515,6 @@
 								>{studyCurrentWord.partOfSpeech}</span
 							>{/if}
 						<p class="study-meaning">{studyCurrentWord.meaning}</p>
-						<div class="word-meta study-meta">
-							{#if imageNumberFor(studyCurrentWord.sourceImageId)}<span class="word-source"
-									>사진 {imageNumberFor(studyCurrentWord.sourceImageId)}</span
-								>{:else if studyCurrentWord.sourceImageId === null}<span
-									class="word-source is-manual">직접 입력</span
-								>{/if}
-							{#if studyCurrentWord.uncertain}<span class="word-status status-ambiguous"
-									>확인 필요</span
-								>{/if}
-							{#if statusFor(studyCurrentWord.id)}<span
-									class={`word-status status-${statusFor(studyCurrentWord.id)}`}
-									>{statusLabel(statusFor(studyCurrentWord.id)!)}</span
-								>{/if}
-						</div>
 					</article>
 				{/if}
 				<button
@@ -503,7 +524,7 @@
 					aria-label="다음 단어"
 					onclick={nextStudy}
 				>
-					<span class="study-nav-label">다음</span><span aria-hidden="true">›</span>
+					<span aria-hidden="true">›</span><span class="study-nav-label">다음</span>
 				</button>
 			</section>
 		{:else}
@@ -522,14 +543,17 @@
 						{@const pronunciation = pronunciationFor(word)}
 						<div class="study-word-row">
 							<span class="word-number">{word.number}</span>
-							<div class="word-cell-content">
-								<div class="word-word-line">
+							<div class="word-cell-content study-word-cell">
+								<div class="study-word-line">
 									<span class="word-english">{word.english}</span>
 									{#if pronunciation}<button
-											class:is-revealed={revealedPronunciations.has(word.id)}
+											class:is-revealed={revealedPronunciation === word.id}
 											class="pronunciation-trigger"
 											type="button"
+											aria-expanded={revealedPronunciation === word.id}
 											aria-label={`${word.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
+											onpointerenter={closePronunciation}
+											onfocus={closePronunciation}
 											onclick={() => togglePronunciation(word.id)}
 										>
 											<span class="pronunciation-ipa">{pronunciation.ipa}</span>
@@ -537,18 +561,6 @@
 												>{pronunciation.guide}</span
 											>
 										</button>{/if}
-								</div>
-								<div class="word-meta">
-									{#if imageNumberFor(word.sourceImageId)}<span class="word-source"
-											>사진 {imageNumberFor(word.sourceImageId)}</span
-										>{:else if word.sourceImageId === null}<span class="word-source is-manual"
-											>직접 입력</span
-										>{/if}
-									{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span
-										>{/if}
-									{#if statusFor(word.id)}<span class={`word-status status-${statusFor(word.id)}`}
-											>{statusLabel(statusFor(word.id)!)}</span
-										>{/if}
 								</div>
 							</div>
 							<span class="word-meaning"
@@ -565,7 +577,7 @@
 					aria-label="다음 단어 목록"
 					onclick={nextStudy}
 				>
-					<span class="study-nav-label">다음</span><span aria-hidden="true">›</span>
+					<span aria-hidden="true">›</span><span class="study-nav-label">다음</span>
 				</button>
 			</section>
 		{/if}
@@ -635,69 +647,75 @@
 			</div>
 			<div class="word-toolbar-right">
 				{#if selectionMode}
-					<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
-						>전체 선택</button
-					>
-					<button
-						class="button button-danger"
-						type="submit"
-						form="bulk-delete-form"
-						disabled={!selectedWordIds.size || bulkDeletePending}
-						>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
-					>
-					<button class="button button-secondary" type="button" onclick={closeSelection}
-						>취소</button
-					>
+					<div class="word-toolbar-group word-toolbar-selection-actions">
+						<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
+							>전체 선택</button
+						>
+						<button
+							class="button button-danger"
+							type="submit"
+							form="bulk-delete-form"
+							disabled={!selectedWordIds.size || bulkDeletePending}
+							>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
+						>
+						<button class="button button-secondary" type="button" onclick={closeSelection}
+							>취소</button
+						>
+					</div>
 				{:else}
-					<button class="button button-secondary" type="button" onclick={() => openWordDialog()}
-						>＋ 단어 추가</button
-					>
-					<form
-						id="photo-upload-form"
-						method="post"
-						action="?/upload"
-						enctype="multipart/form-data"
-						use:enhance={enhanceUpload}
-					>
-						<input
-							bind:this={photoInput}
-							class="visually-hidden"
-							id="photo-upload"
-							name="images"
-							type="file"
-							accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-							multiple
-							onchange={openUploadSettings}
-						/>
+					<div class="word-toolbar-group word-toolbar-primary-actions">
+						<button class="button button-secondary" type="button" onclick={() => openWordDialog()}
+							>＋ 단어 추가</button
+						>
+						<form
+							id="photo-upload-form"
+							method="post"
+							action="?/upload"
+							enctype="multipart/form-data"
+							use:enhance={enhanceUpload}
+						>
+							<input
+								bind:this={photoInput}
+								class="visually-hidden"
+								id="photo-upload"
+								name="images"
+								type="file"
+								accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+								multiple
+								onchange={openUploadSettings}
+							/>
+							<button
+								class="button button-secondary"
+								type="button"
+								aria-label="단어 사진 추가"
+								onclick={openPhotoPicker}
+								disabled={uploadPending}
+							>
+								{uploadPending ? '분석 중…' : '＋ 사진 추가'}
+							</button>
+						</form>
+					</div>
+					<div class="word-toolbar-group word-toolbar-secondary-actions">
 						<button
 							class="button button-secondary"
 							type="button"
-							aria-label="단어 사진 추가"
-							onclick={openPhotoPicker}
-							disabled={uploadPending}
+							disabled={!data.vocabulary.words.length}
+							title="단어 일괄 삭제"
+							onclick={() => (selectionMode = true)}>선택</button
 						>
-							{uploadPending ? '분석 중…' : '＋ 사진 추가'}
-						</button>
-					</form>
-					<button
-						class="button button-secondary"
-						type="button"
-						disabled={!data.vocabulary.words.length}
-						title="단어 일괄 삭제"
-						onclick={() => (selectionMode = true)}>선택</button
-					>
-					<button
-						class="button button-secondary"
-						type="button"
-						disabled={!data.vocabulary.words.length}
-						onclick={() => openTestSettings()}>테스트</button
-					>
-					<button
-						class="button button-secondary"
-						type="button"
-						disabled={!data.vocabulary.words.length}
-						onclick={openStudySettings}>암기 모드</button
-					>
+						<button
+							class="button button-secondary"
+							type="button"
+							disabled={!data.vocabulary.words.length}
+							onclick={() => openTestSettings()}>테스트</button
+						>
+						<button
+							class="button button-secondary"
+							type="button"
+							disabled={!data.vocabulary.words.length}
+							onclick={openStudySettings}>암기 모드</button
+						>
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -786,10 +804,13 @@
 								<div class="word-word-line">
 									<span class="word-english">{word.english}</span>
 									{#if pronunciation}<button
-											class:is-revealed={revealedPronunciations.has(word.id)}
+											class:is-revealed={revealedPronunciation === word.id}
 											class="pronunciation-trigger"
 											type="button"
+											aria-expanded={revealedPronunciation === word.id}
 											aria-label={`${word.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
+											onpointerenter={closePronunciation}
+											onfocus={closePronunciation}
 											onclick={() => togglePronunciation(word.id)}
 										>
 											<span class="pronunciation-ipa">{pronunciation.ipa}</span>
