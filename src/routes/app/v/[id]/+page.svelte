@@ -1,33 +1,60 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { beforeNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { type ResultStatus, type Word } from '$lib/domain';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	let { data, form } = $props();
-	let filter = $state<'all' | ResultStatus>('all');
+	let filterAll = $state(true);
+	let selectedStatuses = new SvelteSet<ResultStatus>();
 	let testAll = $state(true);
 	let testDialog: HTMLDialogElement | undefined = $state();
-	let editDialog: HTMLDialogElement | undefined = $state();
+	let wordDialog: HTMLDialogElement | undefined = $state();
 	let leaveDialog: HTMLDialogElement | undefined = $state();
-	let uploadForm: HTMLFormElement | undefined = $state();
+	let uploadSettingsDialog: HTMLDialogElement | undefined = $state();
+	let uploadDialog: HTMLDialogElement | undefined = $state();
 	let photoInput: HTMLInputElement | undefined = $state();
+	let uploadTargetInput: HTMLInputElement | undefined = $state();
 	let editingWord = $state<Word | null>(null);
 	let editEnglish = $state('');
 	let editMeaning = $state('');
+	let editPartOfSpeech = $state('');
 	let uploadPending = $state(false);
+	let uploadError = $state('');
+	let uploadFileCount = $state(0);
 	let startPending = $state(false);
 	let editPending = $state(false);
 	let deletePending = $state(false);
+	let bulkDeletePending = $state(false);
+	let selectionMode = $state(false);
+	let selectedWordIds = new SvelteSet<string>();
 
-	$effect(() => {
-		if (editingWord && editDialog && !editDialog.open) editDialog.showModal();
-	});
+	const statusOptions: { value: ResultStatus; label: string }[] = [
+		{ value: 'correct', label: '맞은 단어' },
+		{ value: 'wrong', label: '틀린 단어' },
+		{ value: 'unknown', label: '모르는 단어' },
+		{ value: 'ambiguous', label: '헷갈린 단어' }
+	];
 
 	let filteredWords = $derived(
-		filter === 'all'
+		filterAll
 			? data.vocabulary.words
-			: data.vocabulary.words.filter((word) => data.latestResult?.results[word.id] === filter)
+			: data.vocabulary.words.filter((word) => {
+					const status = statusFor(word.id);
+					return status !== undefined && selectedStatuses.has(status);
+				})
+	);
+	let filterSummary = $derived(
+		filterAll
+			? '전체 단어'
+			: selectedStatuses.size
+				? statusOptions
+						.filter(({ value }) => selectedStatuses.has(value))
+						.map(({ label }) => label.replace(' 단어', ''))
+						.join(' · ')
+				: '결과 선택 없음'
 	);
 
 	function statusFor(wordId: string): ResultStatus | undefined {
@@ -54,55 +81,176 @@
 		photoInput?.click();
 	}
 
-	function submitPhotoUpload() {
-		if (photoInput?.files?.length) uploadForm?.requestSubmit();
+	function imageNumberFor(sourceImageId: string | null | undefined) {
+		if (!sourceImageId) return undefined;
+		const index = data.vocabulary.images.findIndex((image) => image.id === sourceImageId);
+		return index === -1 ? undefined : index + 1;
 	}
 
-	const enhanceUpload: SubmitFunction = () => {
+	function openUploadSettings() {
+		if (!photoInput?.files?.length) return;
+		uploadFileCount = photoInput.files.length;
+		if (uploadTargetInput) uploadTargetInput.value = '';
+		uploadSettingsDialog?.showModal();
+	}
+
+	function closeUploadSettings() {
+		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
+		if (photoInput) photoInput.value = '';
+		if (uploadTargetInput) uploadTargetInput.value = '';
+	}
+
+	function toggleFilterAll(event: Event) {
+		filterAll = (event.currentTarget as HTMLInputElement).checked;
+		if (filterAll) selectedStatuses.clear();
+	}
+
+	function toggleFilterStatus(event: Event, status: ResultStatus) {
+		const checked = (event.currentTarget as HTMLInputElement).checked;
+		filterAll = false;
+		if (checked) selectedStatuses.add(status);
+		else selectedStatuses.delete(status);
+	}
+
+	function warnBeforeUnload(event: BeforeUnloadEvent) {
+		if (!uploadPending) return;
+		event.preventDefault();
+		event.returnValue = '';
+	}
+
+	function closeUploadResult() {
+		if (uploadPending) return;
+		if (uploadDialog?.open) uploadDialog.close();
+		uploadError = '';
+		if (photoInput) photoInput.value = '';
+		if (uploadTargetInput) uploadTargetInput.value = '';
+	}
+
+	beforeNavigate(({ cancel, willUnload }) => {
+		if (uploadPending && !willUnload) cancel();
+	});
+
+	const enhanceUpload: SubmitFunction = ({ formData, controller }) => {
 		uploadPending = true;
-		return async ({ update }) => {
-			await update();
+		uploadError = '';
+		uploadFileCount = formData.getAll('images').length;
+		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
+		uploadDialog?.showModal();
+		let cleaned = false;
+		const cleanup = (close: boolean) => {
+			if (cleaned) return;
+			cleaned = true;
 			uploadPending = false;
-			if (photoInput) photoInput.value = '';
+			if (close && uploadDialog?.open) uploadDialog.close();
+			if (close && photoInput) photoInput.value = '';
+			if (close && uploadTargetInput) uploadTargetInput.value = '';
+		};
+		controller.signal.addEventListener(
+			'abort',
+			() => {
+				uploadError =
+					'페이지 이동 요청으로 분석 연결이 중단되었습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
+				cleanup(false);
+			},
+			{ once: true }
+		);
+		return async ({ update, result }) => {
+			try {
+				await update();
+				cleanup(result.type === 'success');
+			} catch {
+				uploadError =
+					'분석 결과를 확인하지 못했습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
+				cleanup(false);
+			} finally {
+				cleanup(false);
+			}
 		};
 	};
 
 	const enhanceStartTest: SubmitFunction = () => {
 		startPending = true;
 		return async ({ update }) => {
-			await update();
-			startPending = false;
+			try {
+				await update();
+			} finally {
+				startPending = false;
+			}
 		};
 	};
 
-	function openWordEdit(word: Word) {
-		editingWord = word;
-		editEnglish = word.english;
-		editMeaning = word.meaning;
+	function openWordDialog(word?: Word) {
+		editingWord = word ?? null;
+		editEnglish = word?.english ?? '';
+		editMeaning = word?.meaning ?? '';
+		editPartOfSpeech = word?.partOfSpeech ?? '';
+		wordDialog?.showModal();
 	}
 
-	function closeWordEdit() {
-		if (editDialog?.open) editDialog.close();
+	function closeWordDialog() {
+		if (wordDialog?.open) wordDialog.close();
 		editingWord = null;
+		editPartOfSpeech = '';
 	}
 
-	const enhanceEditWord: SubmitFunction = () => {
+	const enhanceWord: SubmitFunction = () => {
 		editPending = true;
 		return async ({ update, result }) => {
-			await update();
-			editPending = false;
-			if (result.type === 'success') closeWordEdit();
+			try {
+				await update();
+				if (result.type === 'success') closeWordDialog();
+			} finally {
+				editPending = false;
+			}
 		};
 	};
 
 	const enhanceDeleteWord: SubmitFunction = () => {
 		deletePending = true;
 		return async ({ update, result }) => {
-			await update();
-			deletePending = false;
-			if (result.type === 'success') closeWordEdit();
+			try {
+				await update();
+				if (result.type === 'success') closeWordDialog();
+			} finally {
+				deletePending = false;
+			}
 		};
 	};
+
+	const enhanceDeleteWords: SubmitFunction = () => {
+		bulkDeletePending = true;
+		return async ({ update, result }) => {
+			try {
+				await update();
+				if (result.type === 'success') closeSelection();
+			} finally {
+				bulkDeletePending = false;
+			}
+		};
+	};
+
+	function closeSelection() {
+		selectionMode = false;
+		selectedWordIds.clear();
+	}
+
+	function toggleWordSelection(event: Event, wordId: string) {
+		if ((event.currentTarget as HTMLInputElement).checked) selectedWordIds.add(wordId);
+		else selectedWordIds.delete(wordId);
+	}
+
+	function toggleAllFiltered() {
+		const allSelected = filteredWords.every((word) => selectedWordIds.has(word.id));
+		for (const word of filteredWords) {
+			if (allSelected) selectedWordIds.delete(word.id);
+			else selectedWordIds.add(word.id);
+		}
+	}
+
+	function confirmDeleteWords(event: SubmitEvent) {
+		if (!window.confirm(`선택한 ${selectedWordIds.size}개 단어를 삭제할까요?`))
+			event.preventDefault();
+	}
 
 	function confirmDelete(event: SubmitEvent) {
 		if (!window.confirm('이 단어를 삭제할까요?')) event.preventDefault();
@@ -114,6 +262,8 @@
 		(image.nextElementSibling as HTMLElement | null)?.removeAttribute('hidden');
 	}
 </script>
+
+<svelte:window onbeforeunload={warnBeforeUnload} />
 
 <svelte:head>
 	<title>{data.vocabulary.title} · Vocanb</title>
@@ -157,7 +307,7 @@
 		</p>
 	{/if}
 
-	<div class="word-toolbar">
+	<div class:selection-mode={selectionMode} class="word-toolbar">
 		<div class="word-toolbar-left">
 			<button
 				class="title-link"
@@ -168,40 +318,63 @@
 			<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
 		</div>
 		<div class="word-toolbar-right">
-			<form
-				bind:this={uploadForm}
-				method="post"
-				action="?/upload"
-				enctype="multipart/form-data"
-				use:enhance={enhanceUpload}
-			>
-				<input
-					bind:this={photoInput}
-					class="visually-hidden"
-					id="photo-upload"
-					name="images"
-					type="file"
-					accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-					multiple
-					onchange={submitPhotoUpload}
-				/>
-				<button
-					class="icon-button"
-					type="button"
-					aria-label="단어 사진 추가"
-					title="단어 사진 추가"
-					onclick={openPhotoPicker}
-					disabled={uploadPending}
+			{#if selectionMode}
+				<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
+					>전체 선택</button
 				>
-					{uploadPending ? '…' : '＋'}
-				</button>
-			</form>
-			<button
-				class="button button-secondary"
-				type="button"
-				disabled={!data.vocabulary.words.length}
-				onclick={openTestSettings}>테스트</button
-			>
+				<button
+					class="button button-danger"
+					type="submit"
+					form="bulk-delete-form"
+					disabled={!selectedWordIds.size || bulkDeletePending}
+					>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
+				>
+				<button class="button button-secondary" type="button" onclick={closeSelection}>취소</button>
+			{:else}
+				<button class="button button-secondary" type="button" onclick={() => openWordDialog()}
+					>＋ 단어 추가</button
+				>
+				<form
+					id="photo-upload-form"
+					method="post"
+					action="?/upload"
+					enctype="multipart/form-data"
+					use:enhance={enhanceUpload}
+				>
+					<input
+						bind:this={photoInput}
+						class="visually-hidden"
+						id="photo-upload"
+						name="images"
+						type="file"
+						accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+						multiple
+						onchange={openUploadSettings}
+					/>
+					<button
+						class="button button-secondary"
+						type="button"
+						aria-label="단어 사진 추가"
+						onclick={openPhotoPicker}
+						disabled={uploadPending}
+					>
+						{uploadPending ? '분석 중…' : '＋ 사진 추가'}
+					</button>
+				</form>
+				<button
+					class="button button-secondary"
+					type="button"
+					disabled={!data.vocabulary.words.length}
+					title="단어 일괄 삭제"
+					onclick={() => (selectionMode = true)}>선택</button
+				>
+				<button
+					class="button button-secondary"
+					type="button"
+					disabled={!data.vocabulary.words.length}
+					onclick={openTestSettings}>테스트</button
+				>
+			{/if}
 		</div>
 	</div>
 
@@ -211,75 +384,208 @@
 				맞음 {data.latestResult.summary.correct} · 테스트 {data.latestResult.summary.tested} · 전체 {data
 					.latestResult.summary.total}
 			</p>
-			<label>
-				<span class="visually-hidden">최근 결과 필터</span>
-				<select class="filter-select" bind:value={filter}>
-					<option value="all">전체 단어</option>
-					<option value="correct">맞은 단어</option>
-					<option value="wrong">틀린 단어</option>
-					<option value="unknown">모르는 단어</option>
-					<option value="ambiguous">헷갈린 단어</option>
-				</select>
-			</label>
+			<details class="filter-menu" aria-disabled={selectionMode} inert={selectionMode}>
+				<summary class="filter-summary" aria-label={`최근 결과 필터: ${filterSummary}`}
+					>{filterSummary}</summary
+				>
+				<div class="filter-options">
+					<label class="filter-option">
+						<input
+							type="checkbox"
+							checked={filterAll}
+							disabled={selectionMode}
+							onchange={toggleFilterAll}
+						/>
+						전체 단어
+					</label>
+					{#each statusOptions as option (option.value)}
+						<label class="filter-option">
+							<input
+								type="checkbox"
+								checked={selectedStatuses.has(option.value)}
+								disabled={selectionMode}
+								onchange={(event) => toggleFilterStatus(event, option.value)}
+							/>
+							{option.label}
+						</label>
+					{/each}
+				</div>
+			</details>
 		</section>
 	{/if}
 
 	{#if data.vocabulary.images.length}
-		<div class="image-strip" aria-label="추가한 단어 사진">
-			{#each data.vocabulary.images as image (image.id)}
-				<div class="image-thumb">
-					<img
-						src={`/app/v/${data.vocabulary.id}/images/${image.id}`}
-						alt=""
-						onerror={imageError}
-					/>
-					<span class="broken-thumb" hidden aria-label="이미지를 불러오지 못했습니다.">!</span>
-				</div>
-			{/each}
-		</div>
+		<details>
+			<summary class="field-note photo-summary"
+				>원본 사진 {data.vocabulary.images.length}장 · 단어 목록의 사진 번호와 연결됩니다.</summary
+			>
+			<div class="image-strip" aria-label="추가한 단어 사진">
+				{#each data.vocabulary.images as image, index (image.id)}
+					<div class="image-thumb" aria-label={`사진 ${index + 1}`}>
+						<img
+							src={`/app/v/${data.vocabulary.id}/images/${image.id}`}
+							alt={`사진 ${index + 1}`}
+							onerror={imageError}
+						/>
+						<span class="broken-thumb" hidden aria-label="이미지를 불러오지 못했습니다.">!</span>
+						<span class="image-number" aria-hidden="true">사진 {index + 1}</span>
+					</div>
+				{/each}
+			</div>
+		</details>
 	{/if}
 
 	{#if filteredWords.length}
-		<section class="word-list" aria-label="단어 목록">
-			{#each filteredWords as word (word.id)}
-				{@const status = statusFor(word.id)}
-				<div class="word-row">
-					<span class="word-number">{word.number}</span>
-					<div class="word-cell-content">
-						<span class="word-english">{word.english}</span>
-						{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span>{/if}
-						{#if status}<span
-								class={`word-status status-${status}`}
-								title={`최근 결과: ${statusLabel(status)}`}>{statusLabel(status)}</span
-							>{/if}
+		<form
+			id="bulk-delete-form"
+			method="post"
+			action="?/deleteWords"
+			use:enhance={enhanceDeleteWords}
+			onsubmit={confirmDeleteWords}
+		>
+			<section class:word-list-selecting={selectionMode} class="word-list" aria-label="단어 목록">
+				{#each filteredWords as word (word.id)}
+					{@const status = statusFor(word.id)}
+					<div class="word-row">
+						{#if selectionMode}<label class="word-select" aria-label={`${word.english} 선택`}>
+								<input
+									type="checkbox"
+									name="wordIds"
+									value={word.id}
+									checked={selectedWordIds.has(word.id)}
+									onchange={(event) => toggleWordSelection(event, word.id)}
+								/>
+							</label>{/if}
+						<span class="word-number">{word.number}</span>
+						<div class="word-cell-content">
+							<span class="word-english">{word.english}</span>
+							{#if imageNumberFor(word.sourceImageId)}<span class="word-source"
+									>사진 {imageNumberFor(word.sourceImageId)}</span
+								>{:else if word.sourceImageId === null}<span class="word-source is-manual"
+									>직접 입력</span
+								>{/if}
+							{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span>{/if}
+							{#if status}<span
+									class={`word-status status-${status}`}
+									title={`최근 결과: ${statusLabel(status)}`}>{statusLabel(status)}</span
+								>{/if}
+						</div>
+						<span class="word-meaning"
+							>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
+								>{/if}{word.meaning}</span
+						>
+						<button
+							class="word-edit"
+							type="button"
+							disabled={selectionMode}
+							onclick={() => openWordDialog(word)}
+							aria-label={`${word.english} 단어 편집`}>편집</button
+						>
 					</div>
-					<span class="word-meaning">{word.meaning}</span>
-					<button
-						class="word-edit"
-						type="button"
-						onclick={() => openWordEdit(word)}
-						aria-label={`${word.english} 단어 편집`}>편집</button
-					>
-				</div>
-			{/each}
-		</section>
+				{/each}
+			</section>
+		</form>
 	{:else}
 		<section class="empty-state" aria-labelledby="words-empty-title">
 			<div class="empty-state-mark" aria-hidden="true">＋</div>
-			<h2 id="words-empty-title">아직 단어가 없어요</h2>
+			<h2 id="words-empty-title">{filterAll ? '아직 단어가 없어요' : '표시할 단어가 없어요'}</h2>
 			<p>
-				{filter === 'all'
+				{filterAll
 					? '단어 사진을 추가하면 단어를 자동으로 읽어 정리합니다.'
-					: '이 필터에 해당하는 단어가 없습니다.'}
+					: selectedStatuses.size
+						? '이 결과에 해당하는 단어가 없습니다.'
+						: '결과를 하나 이상 선택해 주세요.'}
 			</p>
-			{#if filter === 'all'}<button
-					class="button button-primary"
-					type="button"
-					onclick={openPhotoPicker}>사진 추가하기</button
+			{#if filterAll}<button class="button button-primary" type="button" onclick={openPhotoPicker}
+					>사진 추가하기</button
 				>{/if}
 		</section>
 	{/if}
 </div>
+
+<dialog
+	bind:this={uploadSettingsDialog}
+	class="modal"
+	aria-labelledby="upload-settings-title"
+	oncancel={closeUploadSettings}
+>
+	<div class="modal-body">
+		<div class="modal-header">
+			<div>
+				<h2 id="upload-settings-title">사진 추가</h2>
+				<p>{uploadFileCount}장의 사진에서 단어를 추출합니다.</p>
+			</div>
+			<button
+				class="modal-close"
+				type="button"
+				aria-label="닫기"
+				title="닫기"
+				onclick={closeUploadSettings}>×</button
+			>
+		</div>
+
+		<div class="form-stack">
+			<div class="field">
+				<label for="upload-target">추출할 단어 수 (선택)</label>
+				<input
+					bind:this={uploadTargetInput}
+					id="upload-target"
+					name="targetWordCount"
+					form="photo-upload-form"
+					type="number"
+					min="1"
+					max={uploadFileCount * 500}
+					step="1"
+					inputmode="numeric"
+					placeholder="전체 추출"
+				/>
+				<p class="field-note">
+					비워 두면 사진에 보이는 단어를 모두 추출합니다. 최대 {uploadFileCount * 500}개
+				</p>
+			</div>
+			<div class="modal-actions">
+				<button class="button button-secondary" type="button" onclick={closeUploadSettings}
+					>취소</button
+				>
+				<button class="button button-primary" type="submit" form="photo-upload-form"
+					>사진 분석</button
+				>
+			</div>
+		</div>
+	</div>
+</dialog>
+
+<dialog
+	bind:this={uploadDialog}
+	class="modal"
+	aria-labelledby="ocr-progress-title"
+	aria-describedby="ocr-progress-description"
+	oncancel={(event) => event.preventDefault()}
+>
+	<div class="modal-body ocr-modal-body">
+		<h2 id="ocr-progress-title">{uploadPending ? 'OCR 진행 중' : '사진 분석 실패'}</h2>
+		{#if uploadPending}
+			<p id="ocr-progress-description">
+				{uploadFileCount}장의 사진에서 단어를 읽고 있어요. 분석이 끝날 때까지 앱 안에서 다른
+				페이지로 이동할 수 없습니다.
+			</p>
+			<progress class="ocr-progress" aria-label="OCR 처리 중"></progress>
+			<p class="ocr-warning">
+				새로고침하거나 창을 닫지 마세요. 분석 결과가 저장되지 않을 수 있어요.
+			</p>
+		{:else}
+			<p id="ocr-progress-description">사진 분석을 완료하지 못했습니다.</p>
+			<p class="message message-error" role="alert" aria-live="assertive">
+				{uploadError || form?.message || '잠시 후 다시 시도해 주세요.'}
+			</p>
+			<div class="modal-actions">
+				<button class="button button-secondary" type="button" onclick={closeUploadResult}
+					>닫기</button
+				>
+			</div>
+		{/if}
+	</div>
+</dialog>
 
 <dialog bind:this={testDialog} class="modal" aria-labelledby="test-settings-title">
 	<div class="modal-body">
@@ -353,7 +659,11 @@
 				</div>
 			</fieldset>
 
-			{#if form?.message}<p class="message message-error" role="alert" aria-live="assertive">
+			{#if form?.action === 'startTest' && form.message}<p
+					class="message message-error"
+					role="alert"
+					aria-live="assertive"
+				>
 					{form.message}
 				</p>{/if}
 			<div class="modal-actions">
@@ -368,55 +678,77 @@
 	</div>
 </dialog>
 
-{#if editingWord}
-	<dialog bind:this={editDialog} class="modal" aria-labelledby="edit-word-title">
-		<div class="modal-body">
-			<div class="modal-header">
-				<div>
-					<h2 id="edit-word-title">단어 편집</h2>
-					<p>자동으로 읽은 내용을 바로잡을 수 있어요.</p>
-				</div>
-				<button
-					class="modal-close"
-					type="button"
-					aria-label="닫기"
-					title="닫기"
-					onclick={closeWordEdit}>×</button
-				>
+<dialog
+	bind:this={wordDialog}
+	class="modal"
+	aria-labelledby="word-dialog-title"
+	oncancel={closeWordDialog}
+>
+	<div class="modal-body">
+		<div class="modal-header">
+			<div>
+				<h2 id="word-dialog-title">{editingWord ? '단어 편집' : '단어 추가'}</h2>
+				<p>
+					{editingWord
+						? '영어, 한국어 뜻, 품사를 바로잡을 수 있어요.'
+						: '사진 없이 직접 저장하는 단어입니다.'}
+				</p>
 			</div>
-
-			<form
-				id="edit-word-form"
-				method="post"
-				action="?/updateWord"
-				use:enhance={enhanceEditWord}
-				class="form-stack"
+			<button
+				class="modal-close"
+				type="button"
+				aria-label="닫기"
+				title="닫기"
+				onclick={closeWordDialog}>×</button
 			>
-				<input type="hidden" name="wordId" value={editingWord.id} />
-				<div class="field">
-					<label for="edit-english">영어</label><input
-						id="edit-english"
-						name="english"
-						maxlength="300"
-						bind:value={editEnglish}
-						required
-					/>
-				</div>
-				<div class="field">
-					<label for="edit-meaning">뜻</label><input
-						id="edit-meaning"
-						name="meaning"
-						maxlength="1000"
-						bind:value={editMeaning}
-						required
-					/>
-				</div>
-				{#if form?.message}<p class="message message-error" role="alert" aria-live="assertive">
-						{form.message}
-					</p>{/if}
-			</form>
-			<div class="modal-actions">
-				<form
+		</div>
+
+		<form
+			id="word-form"
+			method="post"
+			action={editingWord ? '?/updateWord' : '?/addWord'}
+			use:enhance={enhanceWord}
+			class="form-stack"
+		>
+			{#if editingWord}<input type="hidden" name="wordId" value={editingWord.id} />{/if}
+			<div class="field">
+				<label for="word-english">영어</label><input
+					id="word-english"
+					name="english"
+					maxlength="300"
+					bind:value={editEnglish}
+					autocomplete="off"
+					required
+				/>
+			</div>
+			<div class="field">
+				<label for="word-meaning">한국어 뜻</label><input
+					id="word-meaning"
+					name="meaning"
+					maxlength="1000"
+					bind:value={editMeaning}
+					required
+				/>
+			</div>
+			<div class="field">
+				<label for="word-part-of-speech">품사 <span class="field-optional">선택</span></label><input
+					id="word-part-of-speech"
+					name="partOfSpeech"
+					maxlength="30"
+					bind:value={editPartOfSpeech}
+					placeholder="예: 명사, 동사"
+				/>
+			</div>
+			{#if form?.message && (form.action === (editingWord ? 'updateWord' : 'addWord') || (editingWord && form.action === 'deleteWord'))}<p
+					class="message message-error"
+					role="alert"
+					aria-live="assertive"
+				>
+					{form.message}
+				</p>{/if}
+		</form>
+		<div class="modal-actions">
+			{#if editingWord}<form
 					method="post"
 					action="?/deleteWord"
 					use:enhance={enhanceDeleteWord}
@@ -426,18 +758,14 @@
 					<button class="button button-danger" type="submit" disabled={deletePending}
 						>{deletePending ? '삭제 중…' : '삭제'}</button
 					>
-				</form>
-				<button class="button button-secondary" type="button" onclick={closeWordEdit}>취소</button>
-				<button
-					class="button button-primary"
-					type="submit"
-					form="edit-word-form"
-					disabled={editPending}>{editPending ? '저장 중…' : '저장'}</button
-				>
-			</div>
+				</form>{/if}
+			<button class="button button-secondary" type="button" onclick={closeWordDialog}>취소</button>
+			<button class="button button-primary" type="submit" form="word-form" disabled={editPending}
+				>{editPending ? '저장 중…' : editingWord ? '저장' : '단어 추가'}</button
+			>
 		</div>
-	</dialog>
-{/if}
+	</div>
+</dialog>
 
 <dialog bind:this={leaveDialog} class="modal" aria-labelledby="leave-vocabulary-title">
 	<div class="modal-body">

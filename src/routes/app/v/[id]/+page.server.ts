@@ -1,13 +1,15 @@
 import {
 	createTestSession,
 	latestCompletedTest,
+	normalizeOcrEntry,
 	parseTestRange,
+	removeWords,
 	summarizeTest,
 	type TestSession,
 	type Word
 } from '$lib/domain';
 import { normalizeUpload } from '$lib/server/image';
-import { ocrProvider } from '$lib/server/ocr';
+import { limitOcrEntries, mapWithConcurrency, ocrProvider } from '$lib/server/ocr';
 import { getVocabulary, imagePath, updateVocabulary, uploadDirectory } from '$lib/server/storage';
 import { fail, redirect } from '@sveltejs/kit';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -33,9 +35,36 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 };
 
 function text(data: FormData, name: string, max: number) {
-	const value = String(data.get(name) || '').trim();
+	const value = String(data.get(name) ?? '').trim();
 	if (!value || value.length > max) throw new Error('입력값을 확인해 주세요.');
 	return value;
+}
+
+function optionalText(data: FormData, name: string, max: number) {
+	const value = String(data.get(name) ?? '').trim();
+	if (value.length > max) throw new Error('입력값을 확인해 주세요.');
+	return value || undefined;
+}
+
+async function deleteVocabularyWords(
+	userId: string,
+	vocabularyId: string,
+	wordIds: ReadonlySet<string>
+) {
+	let orphanImageFilenames: string[] = [];
+	await updateVocabulary(userId, vocabularyId, (vocabulary) => {
+		const result = removeWords(vocabulary, wordIds);
+		orphanImageFilenames = result.orphanImages.map(({ filename }) => filename);
+		return result.vocabulary;
+	});
+	const cleanup = await Promise.allSettled(
+		orphanImageFilenames.map((filename) =>
+			rm(imagePath(userId, vocabularyId, filename), { force: true })
+		)
+	);
+	for (const result of cleanup) {
+		if (result.status === 'rejected') console.error('Orphan image cleanup failed:', result.reason);
+	}
 }
 
 export const actions: Actions = {
@@ -44,51 +73,89 @@ export const actions: Actions = {
 		const files = data
 			.getAll('images')
 			.filter((value): value is File => value instanceof File && value.size > 0);
-		if (!files.length) return fail(400, { message: '추가할 사진을 선택해 주세요.' });
+		if (!files.length)
+			return fail(400, { action: 'upload', message: '추가할 사진을 선택해 주세요.' });
 		if (files.length > 10)
-			return fail(400, { message: '사진은 한 번에 최대 10장까지 추가할 수 있습니다.' });
+			return fail(400, {
+				action: 'upload',
+				message: '사진은 한 번에 최대 10장까지 추가할 수 있습니다.'
+			});
 		if (files.reduce((total, file) => total + file.size, 0) > 90 * 1024 * 1024) {
-			return fail(400, { message: '한 번에 올리는 사진은 모두 합쳐 90MB 이하여야 합니다.' });
+			return fail(400, {
+				action: 'upload',
+				message: '한 번에 올리는 사진은 모두 합쳐 90MB 이하여야 합니다.'
+			});
 		}
+		const targetValue = String(data.get('targetWordCount') || '').trim();
+		let targetWordCount: number | undefined;
+		if (targetValue) {
+			const parsedTarget = Number(targetValue);
+			if (!Number.isInteger(parsedTarget) || parsedTarget < 1 || parsedTarget > files.length * 500)
+				return fail(400, {
+					action: 'upload',
+					message: `단어 수는 1~${files.length * 500} 사이의 정수로 입력해 주세요.`
+				});
+			targetWordCount = parsedTarget;
+		}
+
+		let normalized: Buffer[];
+		try {
+			normalized = await mapWithConcurrency(files, 2, normalizeUpload);
+		} catch (error) {
+			return fail(400, {
+				action: 'upload',
+				message: error instanceof Error ? error.message : '이미지를 읽을 수 없습니다.'
+			});
+		}
+
+		let results: Awaited<ReturnType<typeof ocrProvider.extract>>[];
+		try {
+			const targetPerImage =
+				targetWordCount === undefined ? undefined : Math.min(targetWordCount, 500);
+			results = await mapWithConcurrency(normalized, 2, (bytes) =>
+				ocrProvider.extract(bytes, targetPerImage)
+			);
+		} catch (error) {
+			console.error('OCR failed:', error instanceof Error ? error.message : 'unknown error');
+			return fail(502, {
+				action: 'upload',
+				message: '단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.'
+			});
+		}
+
 		const prepared: {
 			imageId: string;
 			filename: string;
 			bytes: Buffer;
 			words: Omit<Word, 'number'>[];
 		}[] = [];
-		for (const file of files) {
-			let bytes: Buffer;
-			try {
-				bytes = await normalizeUpload(file);
-			} catch (error) {
-				return fail(400, {
-					message: error instanceof Error ? error.message : '이미지를 읽을 수 없습니다.'
-				});
-			}
-			let result;
-			try {
-				result = await ocrProvider.extract(bytes);
-			} catch (error) {
-				console.error('OCR failed:', error instanceof Error ? error.message : 'unknown error');
-				return fail(502, { message: '단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.' });
-			}
+		const limitedResults = limitOcrEntries(results, targetWordCount);
+		for (const [index, bytes] of normalized.entries()) {
+			const result = limitedResults[index];
+			const entries = result.entries.map(normalizeOcrEntry).filter(({ meaning }) => meaning);
+			if (!entries.length) continue;
 			const now = new Date().toISOString();
 			const imageId = crypto.randomUUID();
 			prepared.push({
 				imageId,
 				filename: `${imageId}.jpg`,
 				bytes,
-				words: result.entries.map((entry) => ({
-					id: crypto.randomUUID(),
-					english: entry.english,
-					meaning: entry.meaning,
-					sourceImageId: imageId,
-					uncertain: entry.uncertain,
-					createdAt: now,
-					updatedAt: now
-				}))
+				words: entries.map((entry) => {
+					return {
+						id: crypto.randomUUID(),
+						english: entry.english,
+						meaning: entry.meaning,
+						...(entry.partOfSpeech ? { partOfSpeech: entry.partOfSpeech } : {}),
+						sourceImageId: imageId,
+						uncertain: entry.uncertain,
+						createdAt: now,
+						updatedAt: now
+					};
+				})
 			});
 		}
+		if (!prepared.length)
+			return fail(422, { action: 'upload', message: '사진에서 저장할 단어를 찾지 못했습니다.' });
 
 		const written: string[] = [];
 		try {
@@ -113,15 +180,55 @@ export const actions: Actions = {
 			});
 			return {
 				success: true,
-				message: `${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
+				action: 'upload',
+				message:
+					targetWordCount === undefined
+						? `${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
+						: `요청한 ${targetWordCount}개 중 ${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
 			};
 		} catch (error) {
-			await Promise.all(written.map((path) => rm(path, { force: true })));
+			const cleanup = await Promise.allSettled(written.map((path) => rm(path, { force: true })));
+			for (const result of cleanup) {
+				if (result.status === 'rejected') console.error('Upload rollback failed:', result.reason);
+			}
 			console.error(
 				'Upload save failed:',
 				error instanceof Error ? error.message : 'unknown error'
 			);
-			return fail(500, { message: '사진과 단어를 저장하지 못했습니다. 다시 시도해 주세요.' });
+			return fail(500, {
+				action: 'upload',
+				message: '사진과 단어를 저장하지 못했습니다. 다시 시도해 주세요.'
+			});
+		}
+	},
+	addWord: async ({ request, locals, params }) => {
+		const data = await request.formData();
+		try {
+			const english = text(data, 'english', 300);
+			const meaning = text(data, 'meaning', 1000);
+			const partOfSpeech = optionalText(data, 'partOfSpeech', 30);
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
+				const now = new Date().toISOString();
+				vocabulary.words.push({
+					id: crypto.randomUUID(),
+					number: Math.max(0, ...vocabulary.words.map((word) => word.number)) + 1,
+					english,
+					meaning,
+					...(partOfSpeech ? { partOfSpeech } : {}),
+					sourceImageId: null,
+					uncertain: false,
+					createdAt: now,
+					updatedAt: now
+				});
+				return vocabulary;
+			});
+			return { success: true, action: 'addWord', message: '단어를 추가했습니다.' };
+		} catch (error) {
+			console.error('Word add failed:', error instanceof Error ? error.message : 'unknown error');
+			return fail(400, {
+				action: 'addWord',
+				message: '단어를 추가하지 못했습니다. 입력값을 확인해 주세요.'
+			});
 		}
 	},
 	updateWord: async ({ request, locals, params }) => {
@@ -130,43 +237,65 @@ export const actions: Actions = {
 		try {
 			const english = text(data, 'english', 300);
 			const meaning = text(data, 'meaning', 1000);
+			const partOfSpeech = optionalText(data, 'partOfSpeech', 30);
 			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
 				const word = vocabulary.words.find((candidate) => candidate.id === wordId);
 				if (!word) throw new Error('단어를 찾을 수 없습니다.');
 				Object.assign(word, {
 					english,
 					meaning,
+					partOfSpeech,
 					uncertain: false,
 					updatedAt: new Date().toISOString()
 				});
 				return vocabulary;
 			});
-			return { success: true, message: '단어를 수정했습니다.' };
+			return { success: true, action: 'updateWord', message: '단어를 수정했습니다.' };
 		} catch (error) {
 			console.error(
 				'Word update failed:',
 				error instanceof Error ? error.message : 'unknown error'
 			);
-			return fail(400, { message: '단어를 수정하지 못했습니다. 입력값을 확인해 주세요.' });
+			return fail(400, {
+				action: 'updateWord',
+				message: '단어를 수정하지 못했습니다. 입력값을 확인해 주세요.'
+			});
 		}
 	},
 	deleteWord: async ({ request, locals, params }) => {
 		const wordId = String((await request.formData()).get('wordId') || '');
 		try {
-			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
-				const remaining = vocabulary.words.filter((word) => word.id !== wordId);
-				if (remaining.length === vocabulary.words.length)
-					throw new Error('단어를 찾을 수 없습니다.');
-				vocabulary.words = remaining.map((word, index) => ({ ...word, number: index + 1 }));
-				return vocabulary;
-			});
-			return { success: true, message: '잘못 추출된 단어를 삭제했습니다.' };
+			await deleteVocabularyWords(locals.userId!, params.id, new Set([wordId]));
+			return {
+				success: true,
+				action: 'deleteWord',
+				message: '잘못 추출된 단어를 삭제했습니다.'
+			};
 		} catch (error) {
 			console.error(
 				'Word delete failed:',
 				error instanceof Error ? error.message : 'unknown error'
 			);
-			return fail(400, { message: '단어를 삭제하지 못했습니다.' });
+			return fail(400, { action: 'deleteWord', message: '단어를 삭제하지 못했습니다.' });
+		}
+	},
+	deleteWords: async ({ request, locals, params }) => {
+		const wordIds = new Set((await request.formData()).getAll('wordIds').map(String));
+		if (!wordIds.size)
+			return fail(400, { action: 'deleteWords', message: '삭제할 단어를 선택해 주세요.' });
+		try {
+			await deleteVocabularyWords(locals.userId!, params.id, wordIds);
+			return {
+				success: true,
+				action: 'deleteWords',
+				message: `${wordIds.size}개 단어를 삭제했습니다.`
+			};
+		} catch (error) {
+			console.error(
+				'Word batch delete failed:',
+				error instanceof Error ? error.message : 'unknown error'
+			);
+			return fail(400, { action: 'deleteWords', message: '단어를 삭제하지 못했습니다.' });
 		}
 	},
 	startTest: async ({ request, locals, params }) => {
@@ -174,7 +303,8 @@ export const actions: Actions = {
 		let created: TestSession;
 		try {
 			const vocabulary = await getVocabulary(locals.userId!, params.id);
-			if (!vocabulary) return fail(404, { message: '단어장을 찾을 수 없습니다.' });
+			if (!vocabulary)
+				return fail(404, { action: 'startTest', message: '단어장을 찾을 수 없습니다.' });
 			const range = parseTestRange(
 				vocabulary.words,
 				data.get('all') === 'on',
@@ -191,6 +321,7 @@ export const actions: Actions = {
 			});
 		} catch (error) {
 			return fail(400, {
+				action: 'startTest',
 				message: error instanceof Error ? error.message : '테스트 설정을 확인해 주세요.'
 			});
 		}

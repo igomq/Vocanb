@@ -32,8 +32,11 @@
 	const enhanceCreate: SubmitFunction = () => {
 		createPending = true;
 		return async ({ update }) => {
-			await update();
-			createPending = false;
+			try {
+				await update();
+			} finally {
+				createPending = false;
+			}
 		};
 	};
 </script>

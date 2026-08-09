@@ -14,6 +14,10 @@
 		mobileOpen = false;
 	}
 
+	function confirmDeleteVocabulary(event: SubmitEvent, title: string) {
+		if (!window.confirm(`‘${title}’ 단어장과 모든 단어를 삭제할까요?`)) event.preventDefault();
+	}
+
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') closeDrawer();
 	}
@@ -21,8 +25,11 @@
 	const enhanceLogout: SubmitFunction = () => {
 		logoutPending = true;
 		return async ({ update }) => {
-			await update();
-			logoutPending = false;
+			try {
+				await update();
+			} finally {
+				logoutPending = false;
+			}
 		};
 	};
 </script>
@@ -73,21 +80,36 @@
 				</a>
 				{#if data.vocabularies.length}
 					{#each data.vocabularies as vocabulary, index (vocabulary.id)}
-						<a
-							class:is-active={isActive(vocabulary.id)}
-							class="sidebar-link"
-							href={resolve('/app/v/[id]', { id: vocabulary.id })}
-							onclick={closeDrawer}
-							aria-current={isActive(vocabulary.id) ? 'page' : undefined}
-						>
-							<span class="sidebar-link-index">{String(index + 1).padStart(2, '0')}</span>
-							<span class="sidebar-link-copy">
-								<span class="sidebar-link-title">{vocabulary.title}</span>
-								{#if vocabulary.rangeLabel}<span class="sidebar-link-range"
-										>{vocabulary.rangeLabel}</span
-									>{/if}
-							</span>
-						</a>
+						<div class="sidebar-item">
+							<a
+								class:is-active={isActive(vocabulary.id)}
+								class="sidebar-link"
+								href={resolve('/app/v/[id]', { id: vocabulary.id })}
+								onclick={closeDrawer}
+								aria-current={isActive(vocabulary.id) ? 'page' : undefined}
+							>
+								<span class="sidebar-link-index">{String(index + 1).padStart(2, '0')}</span>
+								<span class="sidebar-link-copy">
+									<span class="sidebar-link-title">{vocabulary.title}</span>
+									{#if vocabulary.rangeLabel}<span class="sidebar-link-range"
+											>{vocabulary.rangeLabel}</span
+										>{/if}
+								</span>
+							</a>
+							<form
+								method="post"
+								action="/app?/deleteVocabulary"
+								onsubmit={(event) => confirmDeleteVocabulary(event, vocabulary.title)}
+							>
+								<input type="hidden" name="id" value={vocabulary.id} />
+								<button
+									class="sidebar-delete"
+									type="submit"
+									aria-label={`${vocabulary.title} 단어장 삭제`}
+									title="단어장 삭제">×</button
+								>
+							</form>
+						</div>
 					{/each}
 				{:else}
 					<p class="sidebar-empty">아직 단어장이 없습니다.<br />오른쪽 위 +로 시작하세요.</p>

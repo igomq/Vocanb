@@ -35,18 +35,25 @@
 		revealed.add(wordId);
 	}
 
-	const enhanceEvaluation: SubmitFunction = () => {
+	const enhanceEvaluation: SubmitFunction = ({ formData }) => {
+		pendingWordId = String(formData.get('wordId'));
 		return async ({ update }) => {
-			await update();
-			pendingWordId = null;
+			try {
+				await update();
+			} finally {
+				pendingWordId = null;
+			}
 		};
 	};
 
 	const enhanceComplete: SubmitFunction = () => {
 		completePending = true;
 		return async ({ update }) => {
-			await update();
-			completePending = false;
+			try {
+				await update();
+			} finally {
+				completePending = false;
+			}
 		};
 	};
 
@@ -102,20 +109,27 @@
 		{#each data.test.items as item (item.wordId)}
 			<div class="test-row">
 				<div class="test-row-top">
-					<p class="test-prompt">{promptFor(item)}</p>
+					<p class="test-prompt">
+						{#if data.test.direction === 'korean-to-english' && item.partOfSpeech}<span
+								class="part-of-speech">{item.partOfSpeech}</span
+							>{/if}{promptFor(item)}
+					</p>
 					<span class="test-number">{item.number}번</span>
 				</div>
 
 				{#if revealed.has(item.wordId) || item.result}
 					<div class="answer-block">
 						<span class="answer-label">정답</span>
-						<p class="answer-text">{answerFor(item)}</p>
+						<p class="answer-text">
+							{#if data.test.direction === 'english-to-korean' && item.partOfSpeech}<span
+									class="part-of-speech">{item.partOfSpeech}</span
+								>{/if}{answerFor(item)}
+						</p>
 						<form
 							class="evaluation-form"
 							method="post"
 							action="?/evaluate"
 							use:enhance={enhanceEvaluation}
-							onsubmit={() => (pendingWordId = item.wordId)}
 						>
 							<input type="hidden" name="wordId" value={item.wordId} />
 							{#each statuses as status (status.value)}

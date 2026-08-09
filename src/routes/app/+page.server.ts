@@ -1,4 +1,4 @@
-import { createVocabulary, getSuggestions } from '$lib/server/storage';
+import { createVocabulary, deleteVocabulary, getSuggestions } from '$lib/server/storage';
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -28,5 +28,18 @@ export const actions: Actions = {
 			});
 		}
 		redirect(303, `/app/v/${vocabulary.id}`);
+	},
+	deleteVocabulary: async ({ request, locals }) => {
+		const id = String((await request.formData()).get('id') || '');
+		try {
+			await deleteVocabulary(locals.userId!, id);
+		} catch (error) {
+			console.error(
+				'Vocabulary delete failed:',
+				error instanceof Error ? error.message : 'unknown error'
+			);
+			return fail(400, { message: '단어장을 삭제하지 못했습니다.' });
+		}
+		redirect(303, '/app');
 	}
 };
