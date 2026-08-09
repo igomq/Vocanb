@@ -8,8 +8,11 @@
 	const enhanceLogin: SubmitFunction = () => {
 		pending = true;
 		return async ({ update }) => {
-			await update();
-			pending = false;
+			try {
+				await update();
+			} finally {
+				pending = false;
+			}
 		};
 	};
 </script>

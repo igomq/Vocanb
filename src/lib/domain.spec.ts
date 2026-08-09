@@ -93,6 +93,22 @@ describe('test range and mode', () => {
 		expect(words.map(({ id }) => id)).toEqual(original);
 		expect(random.direction).toBe('korean-to-english');
 	});
+
+	it('keeps legacy test items without part of speech', () => {
+		const [item] = createTestSession(
+			[words[0]],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean'
+		).items;
+		expect(item).toEqual({
+			wordId: words[0].id,
+			number: words[0].number,
+			english: words[0].english,
+			meaning: words[0].meaning
+		});
+		expect(item).not.toHaveProperty('partOfSpeech');
+	});
 });
 
 describe('results and OCR schema', () => {
@@ -147,23 +163,60 @@ describe('results and OCR schema', () => {
 		).toHaveProperty('entries.0.meaning', '사과');
 	});
 
-	it('separates part of speech and removes relation notes from OCR meanings', () => {
-		expect(
-			normalizeOcrEntry({
+	it('normalizes OCR meanings without restoring removed text', () => {
+		const cases = [
+			{
+				name: 'Korean relation target',
+				meaning: '예의 바른 반의어 무례한',
+				expectedMeaning: '예의 바른'
+			},
+			{ name: 'relation-only meaning', meaning: '반의어 무례한', expectedMeaning: '' },
+			{
+				name: 'unclosed relation',
+				meaning: '형 (반 discourteous',
+				expectedMeaning: '',
+				expectedPartOfSpeech: '형'
+			},
+			{
+				name: 'attached relation note',
+				meaning: '형 예의 바른(반 discourteous)',
+				expectedMeaning: '예의 바른',
+				expectedPartOfSpeech: '형'
+			},
+			{
+				name: 'bracketed POS',
+				meaning: '[형]뜻',
+				expectedMeaning: '뜻',
+				expectedPartOfSpeech: '형'
+			},
+			{ name: 'dotted POS', meaning: '형.뜻', expectedMeaning: '뜻', expectedPartOfSpeech: '형' },
+			{
+				name: 'structured POS wins',
+				meaning: '형 뜻',
+				partOfSpeech: 'noun',
+				expectedMeaning: '뜻',
+				expectedPartOfSpeech: '명'
+			},
+			{ name: 'bare POS-looking word', meaning: '형뜻', expectedMeaning: '형뜻' },
+			{ name: 'ordinary word', meaning: '반가운', expectedMeaning: '반가운' }
+		] satisfies {
+			name: string;
+			meaning: string;
+			partOfSpeech?: string;
+			expectedMeaning: string;
+			expectedPartOfSpeech?: string;
+		}[];
+
+		for (const testCase of cases) {
+			const normalized = normalizeOcrEntry({
 				sourceOrder: 1,
-				english: 'courteous',
-				meaning: '형 예의 바른, 공손한 (반 discourteous)',
+				english: 'word',
+				meaning: testCase.meaning,
+				...(testCase.partOfSpeech ? { partOfSpeech: testCase.partOfSpeech } : {}),
 				uncertain: false
-			})
-		).toMatchObject({ partOfSpeech: '형', meaning: '예의 바른, 공손한' });
-		expect(
-			normalizeOcrEntry({
-				sourceOrder: 2,
-				english: 'polite',
-				meaning: '예의 바른 반 impolite',
-				partOfSpeech: 'adjective',
-				uncertain: false
-			})
-		).toMatchObject({ partOfSpeech: '형', meaning: '예의 바른' });
+			});
+			expect(normalized, testCase.name).toMatchObject({ meaning: testCase.expectedMeaning });
+			expect(normalized.partOfSpeech, testCase.name).toBe(testCase.expectedPartOfSpeech);
+		}
 	});
 });

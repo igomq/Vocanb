@@ -25,8 +25,11 @@
 	const enhanceLogout: SubmitFunction = () => {
 		logoutPending = true;
 		return async ({ update }) => {
-			await update();
-			logoutPending = false;
+			try {
+				await update();
+			} finally {
+				logoutPending = false;
+			}
 		};
 	};
 </script>

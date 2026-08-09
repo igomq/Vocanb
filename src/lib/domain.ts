@@ -103,11 +103,9 @@ const partOfSpeechLabels: Record<string, string> = {
 	부사: '부'
 };
 const partOfSpeechPrefix =
-	/^\s*(?:\[|\()?(명사|형용사|동사|부사|noun|adjective|verb|adverb|adj|adv|n|v|명|형|동|부)\.?(?:\]|\))?(?:\s+|[:：]\s*)/i;
+	/^\s*(?:\[|\()?(명사|형용사|동사|부사|noun|adjective|verb|adverb|adj|adv|n|v|명|형|동|부)(?:(?:\]|\))|\.|(?=\s|$|[:：]))\s*[:：]?\s*/i;
 const relationNote =
-	/\s*(?:\[|\()\s*(?:유(?:의어)?|반(?:의어)?|syn(?:onym)?|ant(?:onym)?)\s*[:：]?\s*[^)\]]*(?:\]|\))\s*/gi;
-const relationTail =
-	/(?:^|\s)(?:유(?:의어)?|반(?:의어)?|syn(?:onym)?|ant(?:onym)?)\s*[:：]?\s+[a-z][\s\S]*$/i;
+	/(?:^|\s+|(?=\[|\())(?:\[|\()?\s*(?:유(?:의어)?|반(?:의어)?|syn(?:onym)?|ant(?:onym)?)(?:\s*[:：]\s*|\s+)(?=\S)[\s\S]*?(?:\]|\)|$)/giu;
 
 export function normalizeOcrEntry(entry: OcrResponse['entries'][number]) {
 	let meaning = entry.meaning;
@@ -115,10 +113,8 @@ export function normalizeOcrEntry(entry: OcrResponse['entries'][number]) {
 	if (prefix) meaning = meaning.slice(prefix[0].length);
 	meaning = meaning
 		.replace(relationNote, ' ')
-		.replace(relationTail, '')
 		.replace(/\s{2,}/g, ' ')
 		.trim();
-	if (!meaning) meaning = entry.meaning.trim();
 	const rawPartOfSpeech = (entry.partOfSpeech || prefix?.[1] || '').replace(/\.$/, '').trim();
 	const partOfSpeech = partOfSpeechLabels[rawPartOfSpeech.toLowerCase()] || rawPartOfSpeech;
 	return { ...entry, meaning, ...(partOfSpeech ? { partOfSpeech } : {}) };

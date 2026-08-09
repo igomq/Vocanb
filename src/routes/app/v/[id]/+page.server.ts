@@ -57,11 +57,14 @@ async function deleteVocabularyWords(
 		orphanImageFilenames = result.orphanImages.map(({ filename }) => filename);
 		return result.vocabulary;
 	});
-	await Promise.all(
+	const cleanup = await Promise.allSettled(
 		orphanImageFilenames.map((filename) =>
 			rm(imagePath(userId, vocabularyId, filename), { force: true })
 		)
 	);
+	for (const result of cleanup) {
+		if (result.status === 'rejected') console.error('Orphan image cleanup failed:', result.reason);
+	}
 }
 
 export const actions: Actions = {
@@ -108,7 +111,7 @@ export const actions: Actions = {
 		let results: Awaited<ReturnType<typeof ocrProvider.extract>>[];
 		try {
 			const targetPerImage =
-				targetWordCount === undefined ? undefined : Math.ceil(targetWordCount / files.length);
+				targetWordCount === undefined ? undefined : Math.min(targetWordCount, 500);
 			results = await mapWithConcurrency(normalized, 2, (bytes) =>
 				ocrProvider.extract(bytes, targetPerImage)
 			);
@@ -129,15 +132,15 @@ export const actions: Actions = {
 		const limitedResults = limitOcrEntries(results, targetWordCount);
 		for (const [index, bytes] of normalized.entries()) {
 			const result = limitedResults[index];
-			if (!result.entries.length) continue;
+			const entries = result.entries.map(normalizeOcrEntry).filter(({ meaning }) => meaning);
+			if (!entries.length) continue;
 			const now = new Date().toISOString();
 			const imageId = crypto.randomUUID();
 			prepared.push({
 				imageId,
 				filename: `${imageId}.jpg`,
 				bytes,
-				words: result.entries.map((rawEntry) => {
-					const entry = normalizeOcrEntry(rawEntry);
+				words: entries.map((entry) => {
 					return {
 						id: crypto.randomUUID(),
 						english: entry.english,
@@ -151,6 +154,8 @@ export const actions: Actions = {
 				})
 			});
 		}
+		if (!prepared.length)
+			return fail(422, { action: 'upload', message: '사진에서 저장할 단어를 찾지 못했습니다.' });
 
 		const written: string[] = [];
 		try {
@@ -182,7 +187,10 @@ export const actions: Actions = {
 						: `요청한 ${targetWordCount}개 중 ${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
 			};
 		} catch (error) {
-			await Promise.all(written.map((path) => rm(path, { force: true })));
+			const cleanup = await Promise.allSettled(written.map((path) => rm(path, { force: true })));
+			for (const result of cleanup) {
+				if (result.status === 'rejected') console.error('Upload rollback failed:', result.reason);
+			}
 			console.error(
 				'Upload save failed:',
 				error instanceof Error ? error.message : 'unknown error'

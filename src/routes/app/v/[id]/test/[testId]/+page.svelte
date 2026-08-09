@@ -38,16 +38,22 @@
 	const enhanceEvaluation: SubmitFunction = ({ formData }) => {
 		pendingWordId = String(formData.get('wordId'));
 		return async ({ update }) => {
-			await update();
-			pendingWordId = null;
+			try {
+				await update();
+			} finally {
+				pendingWordId = null;
+			}
 		};
 	};
 
 	const enhanceComplete: SubmitFunction = () => {
 		completePending = true;
 		return async ({ update }) => {
-			await update();
-			completePending = false;
+			try {
+				await update();
+			} finally {
+				completePending = false;
+			}
 		};
 	};
 

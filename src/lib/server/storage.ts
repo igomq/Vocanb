@@ -129,14 +129,18 @@ export async function deleteVocabulary(userId: string, vocabularyId: string) {
 			const index = await readIndex(userId);
 			if (!index.vocabularyIds.includes(vocabularyId))
 				throw new Error('단어장을 찾을 수 없습니다.');
-			await Promise.all([
-				rm(path, { force: true }),
-				rm(uploadDirectory(userId, vocabularyId), { recursive: true, force: true })
-			]);
 			await atomicWrite(indexPath(userId), {
 				...index,
 				vocabularyIds: index.vocabularyIds.filter((id) => id !== vocabularyId)
 			});
+			const cleanup = await Promise.allSettled([
+				rm(path, { force: true }),
+				rm(uploadDirectory(userId, vocabularyId), { recursive: true, force: true })
+			]);
+			for (const result of cleanup) {
+				if (result.status === 'rejected')
+					console.error('Vocabulary cleanup failed:', result.reason);
+			}
 		})
 	);
 }

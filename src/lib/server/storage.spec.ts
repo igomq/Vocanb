@@ -6,10 +6,16 @@ import {
 	uploadDirectory,
 	updateVocabulary
 } from './storage';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('node:fs/promises')>();
+	return { ...actual, rename: vi.fn(actual.rename), rm: vi.fn(actual.rm) };
+});
 
 const userId = 'u_0123456789abcdef0123456789abcdef';
 let directory: string;
@@ -19,7 +25,13 @@ beforeEach(async () => {
 	process.env.DATA_DIR = directory;
 });
 
-afterEach(async () => rm(directory, { recursive: true, force: true }));
+afterEach(async () => {
+	const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+	vi.restoreAllMocks();
+	vi.mocked(fsPromises.rename).mockReset().mockImplementation(actual.rename);
+	vi.mocked(fsPromises.rm).mockReset().mockImplementation(actual.rm);
+	await actual.rm(directory, { recursive: true, force: true });
+});
 
 describe('filesystem storage', () => {
 	it('creates duplicate titles as separate vocabularies', async () => {
@@ -78,5 +90,73 @@ describe('filesystem storage', () => {
 		expect(await getVocabulary(userId, vocabulary.id)).toBeNull();
 		expect(await listVocabularies(userId)).toEqual([]);
 		await expect(access(uploads)).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it('deletes only the selected vocabulary and preserves siblings', async () => {
+		const first = await createVocabulary(userId, '첫 번째', '');
+		const second = await createVocabulary(userId, '두 번째', '');
+		const siblingUploads = uploadDirectory(userId, second.id);
+		await mkdir(siblingUploads, { recursive: true });
+		await writeFile(join(siblingUploads, 'sibling.jpg'), 'sibling');
+
+		await deleteVocabulary(userId, first.id);
+
+		expect((await listVocabularies(userId)).map(({ id }) => id)).toEqual([second.id]);
+		expect(await getVocabulary(userId, second.id)).toMatchObject({ id: second.id });
+		expect(await access(join(siblingUploads, 'sibling.jpg'))).toBeUndefined();
+	});
+
+	it('rejects missing and other-user IDs without changing data', async () => {
+		const vocabulary = await createVocabulary(userId, '보존', '');
+		const uploads = uploadDirectory(userId, vocabulary.id);
+		await mkdir(uploads, { recursive: true });
+		await writeFile(join(uploads, 'keep.jpg'), 'keep');
+		const before = await getVocabulary(userId, vocabulary.id);
+
+		await expect(deleteVocabulary(userId, crypto.randomUUID())).rejects.toThrow('찾을 수 없습니다');
+		await expect(
+			deleteVocabulary('u_fedcba9876543210fedcba9876543210', vocabulary.id)
+		).rejects.toThrow('찾을 수 없습니다');
+
+		expect(await getVocabulary(userId, vocabulary.id)).toEqual(before);
+		expect(await access(join(uploads, 'keep.jpg'))).toBeUndefined();
+	});
+
+	it('does not clean up files when the index commit fails', async () => {
+		const vocabulary = await createVocabulary(userId, '색인 실패', '');
+		const uploads = uploadDirectory(userId, vocabulary.id);
+		await mkdir(uploads, { recursive: true });
+		await writeFile(join(uploads, 'keep.jpg'), 'keep');
+		vi.mocked(fsPromises.rename).mockRejectedValueOnce(new Error('index failed'));
+
+		await expect(deleteVocabulary(userId, vocabulary.id)).rejects.toThrow('index failed');
+
+		expect(await getVocabulary(userId, vocabulary.id)).toEqual(vocabulary);
+		expect(await access(join(uploads, 'keep.jpg'))).toBeUndefined();
+	});
+
+	it('removes every duplicate occurrence from a valid index', async () => {
+		const vocabulary = await createVocabulary(userId, '중복 색인', '');
+		await writeFile(
+			join(directory, 'users', userId, 'index.json'),
+			JSON.stringify({ schemaVersion: 1, vocabularyIds: [vocabulary.id, vocabulary.id] })
+		);
+
+		await deleteVocabulary(userId, vocabulary.id);
+
+		expect(await listVocabularies(userId)).toEqual([]);
+	});
+
+	it('keeps the index committed when cleanup fails', async () => {
+		const vocabulary = await createVocabulary(userId, '정리 실패', '');
+		const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+		vi.mocked(fsPromises.rm)
+			.mockImplementationOnce(actual.rm)
+			.mockRejectedValueOnce(new Error('cleanup failed'));
+
+		await expect(deleteVocabulary(userId, vocabulary.id)).resolves.toBeUndefined();
+
+		expect(await listVocabularies(userId)).toEqual([]);
+		expect(await getVocabulary(userId, vocabulary.id)).toBeNull();
 	});
 });

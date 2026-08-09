@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { beforeNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { type ResultStatus, type Word } from '$lib/domain';
@@ -21,6 +22,7 @@
 	let editMeaning = $state('');
 	let editPartOfSpeech = $state('');
 	let uploadPending = $state(false);
+	let uploadError = $state('');
 	let uploadFileCount = $state(0);
 	let startPending = $state(false);
 	let editPending = $state(false);
@@ -116,19 +118,52 @@
 		event.returnValue = '';
 	}
 
-	const enhanceUpload: SubmitFunction = ({ formData }) => {
+	function closeUploadResult() {
+		if (uploadPending) return;
+		if (uploadDialog?.open) uploadDialog.close();
+		uploadError = '';
+		if (photoInput) photoInput.value = '';
+		if (uploadTargetInput) uploadTargetInput.value = '';
+	}
+
+	beforeNavigate(({ cancel, willUnload }) => {
+		if (uploadPending && !willUnload) cancel();
+	});
+
+	const enhanceUpload: SubmitFunction = ({ formData, controller }) => {
 		uploadPending = true;
+		uploadError = '';
 		uploadFileCount = formData.getAll('images').length;
 		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
 		uploadDialog?.showModal();
-		return async ({ update }) => {
+		let cleaned = false;
+		const cleanup = (close: boolean) => {
+			if (cleaned) return;
+			cleaned = true;
+			uploadPending = false;
+			if (close && uploadDialog?.open) uploadDialog.close();
+			if (close && photoInput) photoInput.value = '';
+			if (close && uploadTargetInput) uploadTargetInput.value = '';
+		};
+		controller.signal.addEventListener(
+			'abort',
+			() => {
+				uploadError =
+					'페이지 이동 요청으로 분석 연결이 중단되었습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
+				cleanup(false);
+			},
+			{ once: true }
+		);
+		return async ({ update, result }) => {
 			try {
 				await update();
+				cleanup(result.type === 'success');
+			} catch {
+				uploadError =
+					'분석 결과를 확인하지 못했습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
+				cleanup(false);
 			} finally {
-				uploadPending = false;
-				if (uploadDialog?.open) uploadDialog.close();
-				if (photoInput) photoInput.value = '';
-				if (uploadTargetInput) uploadTargetInput.value = '';
+				cleanup(false);
 			}
 		};
 	};
@@ -136,8 +171,11 @@
 	const enhanceStartTest: SubmitFunction = () => {
 		startPending = true;
 		return async ({ update }) => {
-			await update();
-			startPending = false;
+			try {
+				await update();
+			} finally {
+				startPending = false;
+			}
 		};
 	};
 
@@ -158,27 +196,36 @@
 	const enhanceWord: SubmitFunction = () => {
 		editPending = true;
 		return async ({ update, result }) => {
-			await update();
-			editPending = false;
-			if (result.type === 'success') closeWordDialog();
+			try {
+				await update();
+				if (result.type === 'success') closeWordDialog();
+			} finally {
+				editPending = false;
+			}
 		};
 	};
 
 	const enhanceDeleteWord: SubmitFunction = () => {
 		deletePending = true;
 		return async ({ update, result }) => {
-			await update();
-			deletePending = false;
-			if (result.type === 'success') closeWordDialog();
+			try {
+				await update();
+				if (result.type === 'success') closeWordDialog();
+			} finally {
+				deletePending = false;
+			}
 		};
 	};
 
 	const enhanceDeleteWords: SubmitFunction = () => {
 		bulkDeletePending = true;
 		return async ({ update, result }) => {
-			await update();
-			bulkDeletePending = false;
-			if (result.type === 'success') closeSelection();
+			try {
+				await update();
+				if (result.type === 'success') closeSelection();
+			} finally {
+				bulkDeletePending = false;
+			}
 		};
 	};
 
@@ -516,12 +563,27 @@
 	oncancel={(event) => event.preventDefault()}
 >
 	<div class="modal-body ocr-modal-body">
-		<h2 id="ocr-progress-title">OCR 진행 중</h2>
-		<p id="ocr-progress-description">
-			{uploadFileCount}장의 사진에서 단어를 읽고 있어요. 잠시만 기다려 주세요.
-		</p>
-		<progress class="ocr-progress" aria-label="OCR 처리 중"></progress>
-		<p class="ocr-warning">새로고침하거나 창을 닫지 마세요. 분석 결과가 저장되지 않을 수 있어요.</p>
+		<h2 id="ocr-progress-title">{uploadPending ? 'OCR 진행 중' : '사진 분석 실패'}</h2>
+		{#if uploadPending}
+			<p id="ocr-progress-description">
+				{uploadFileCount}장의 사진에서 단어를 읽고 있어요. 분석이 끝날 때까지 앱 안에서 다른
+				페이지로 이동할 수 없습니다.
+			</p>
+			<progress class="ocr-progress" aria-label="OCR 처리 중"></progress>
+			<p class="ocr-warning">
+				새로고침하거나 창을 닫지 마세요. 분석 결과가 저장되지 않을 수 있어요.
+			</p>
+		{:else}
+			<p id="ocr-progress-description">사진 분석을 완료하지 못했습니다.</p>
+			<p class="message message-error" role="alert" aria-live="assertive">
+				{uploadError || form?.message || '잠시 후 다시 시도해 주세요.'}
+			</p>
+			<div class="modal-actions">
+				<button class="button button-secondary" type="button" onclick={closeUploadResult}
+					>닫기</button
+				>
+			</div>
+		{/if}
 	</div>
 </dialog>
 
