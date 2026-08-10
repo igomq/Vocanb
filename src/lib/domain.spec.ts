@@ -1,8 +1,12 @@
 import {
+	CONTINUOUS_BATCH_SIZE_DEFAULT,
+	CONTINUOUS_DAY_SIZE_DEFAULT,
 	OcrResponseSchema,
 	WordSchema,
 	createTestSession,
+	nextContinuousLearningStep,
 	normalizeOcrEntry,
+	parseContinuousLearningSettings,
 	parseTestRange,
 	removeWords,
 	summarizeTest,
@@ -108,6 +112,81 @@ describe('test range and mode', () => {
 			meaning: words[0].meaning
 		});
 		expect(item).not.toHaveProperty('partOfSpeech');
+	});
+});
+
+describe('continuous learning progression', () => {
+	const progressWords = Array.from({ length: 50 }, (_, index) => ({
+		...words[0],
+		id: crypto.randomUUID(),
+		number: index + 1,
+		english: `word-${index + 1}`
+	}));
+	const settings = parseContinuousLearningSettings(
+		CONTINUOUS_BATCH_SIZE_DEFAULT,
+		CONTINUOUS_DAY_SIZE_DEFAULT
+	);
+
+	function completedTest(
+		phase: 'batch' | 'cumulative',
+		range: { start: number; end: number },
+		dayRange = { start: 1, end: 40 }
+	) {
+		const session = createTestSession(
+			progressWords.filter((word) => word.number >= range.start && word.number <= range.end),
+			range,
+			'sequential',
+			'english-to-korean',
+			Math.random,
+			{ ...settings, phase, dayStart: dayRange.start, dayEnd: dayRange.end }
+		);
+		session.completedAt = '2026-01-01T00:00:00.000Z';
+		return session;
+	}
+
+	it('moves through batches, a day cumulative test, and the next day', () => {
+		const vocabulary = { words: progressWords, tests: [] as Vocabulary['tests'] };
+		expect(nextContinuousLearningStep(vocabulary, settings)).toMatchObject({
+			status: 'ready',
+			phase: 'batch',
+			range: { start: 1, end: 10 },
+			dayRange: { start: 1, end: 40 }
+		});
+
+		for (const end of [10, 20, 30]) {
+			vocabulary.tests.push(completedTest('batch', { start: end - 9, end }));
+		}
+		expect(nextContinuousLearningStep(vocabulary)).toMatchObject({
+			phase: 'batch',
+			range: { start: 31, end: 40 }
+		});
+
+		vocabulary.tests.push(completedTest('batch', { start: 31, end: 40 }));
+		expect(nextContinuousLearningStep(vocabulary)).toMatchObject({
+			phase: 'cumulative',
+			range: { start: 1, end: 40 }
+		});
+
+		vocabulary.tests.push(completedTest('cumulative', { start: 1, end: 40 }));
+		expect(nextContinuousLearningStep(vocabulary)).toMatchObject({
+			phase: 'batch',
+			range: { start: 41, end: 50 },
+			dayRange: { start: 41, end: 50 }
+		});
+	});
+
+	it('validates settings and resumes an unfinished test', () => {
+		expect(() => parseContinuousLearningSettings('0', '40')).toThrow();
+		expect(() => parseContinuousLearningSettings('41', '40')).toThrow();
+		const unfinished = completedTest('batch', { start: 1, end: 10 });
+		delete unfinished.completedAt;
+		expect(nextContinuousLearningStep({ words: progressWords, tests: [unfinished] })).toMatchObject(
+			{
+				status: 'in-progress',
+				testId: unfinished.id,
+				range: { start: 1, end: 10 }
+			}
+		);
 	});
 });
 

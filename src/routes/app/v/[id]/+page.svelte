@@ -4,8 +4,16 @@
 	import { resolve } from '$app/paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
+		CONTINUOUS_BATCH_SIZE_DEFAULT,
+		CONTINUOUS_BATCH_SIZE_MAX,
+		CONTINUOUS_BATCH_SIZE_MIN,
+		CONTINUOUS_DAY_SIZE_DEFAULT,
+		CONTINUOUS_DAY_SIZE_MAX,
+		CONTINUOUS_DAY_SIZE_MIN,
 		needsPronunciationGuideRefresh,
+		parseContinuousLearningSettings,
 		type Pronunciation,
+		type ContinuousLearningProgress,
 		type ResultStatus,
 		type Word
 	} from '$lib/domain';
@@ -63,6 +71,7 @@
 	let selectedStatuses = new SvelteSet<ResultStatus>();
 	let testAll = $state(true);
 	let testDialog: HTMLDialogElement | undefined = $state();
+	let continuousSettingsDialog: HTMLDialogElement | undefined = $state();
 	let wordDialog: HTMLDialogElement | undefined = $state();
 	let leaveDialog: HTMLDialogElement | undefined = $state();
 	let uploadSettingsDialog: HTMLDialogElement | undefined = $state();
@@ -99,6 +108,11 @@
 	let studyMode = $state<'card' | 'list'>('card');
 	let studyIndex = $state(0);
 	let studyError = $state('');
+	let continuousBatchSize = $state(CONTINUOUS_BATCH_SIZE_DEFAULT);
+	let continuousDaySize = $state(CONTINUOUS_DAY_SIZE_DEFAULT);
+	let continuousError = $state('');
+	let continuousStep = $state<ContinuousLearningProgress | null>(null);
+	let testContinuousStep = $state<ContinuousLearningProgress | null>(null);
 	const studyPageSize = 5;
 
 	const statusOptions: { value: ResultStatus; label: string }[] = [
@@ -168,13 +182,17 @@
 		if (leaveDialog?.open) leaveDialog.close();
 	}
 
-	function openTestSettings(range?: { start: number; end: number }) {
+	function openTestSettings(
+		range?: { start: number; end: number },
+		continuous?: ContinuousLearningProgress
+	) {
 		if (!data.vocabulary.words.length || !testDialog) return;
 		const first = data.vocabulary.words[0].number;
 		const last = data.vocabulary.words.at(-1)!.number;
 		testStart = range?.start ?? first;
 		testEnd = range?.end ?? last;
 		testAll = !range;
+		testContinuousStep = continuous ?? null;
 		testDialog.showModal();
 	}
 
@@ -184,6 +202,7 @@
 
 	function openStudySettings() {
 		if (!data.vocabulary.words.length || !studySettingsDialog) return;
+		continuousStep = null;
 		studyStart = data.vocabulary.words[0].number;
 		studyEnd = data.vocabulary.words.at(-1)!.number;
 		studyAll = true;
@@ -214,6 +233,7 @@
 		}
 		studyStart = start;
 		studyEnd = end;
+		continuousStep = null;
 		studyIndex = 0;
 		studyError = '';
 		closePronunciation();
@@ -225,6 +245,7 @@
 		closePronunciation();
 		studyActive = false;
 		studyIndex = 0;
+		continuousStep = null;
 	}
 
 	function previousStudy() {
@@ -242,10 +263,78 @@
 
 	async function testStudyRange() {
 		if (!studyActive || !studyWords.length) return;
-		const range = studyAll ? undefined : { start: studyStart, end: studyEnd };
+		const range =
+			continuousStep?.range ?? (studyAll ? undefined : { start: studyStart, end: studyEnd });
 		studyActive = false;
 		await tick();
-		openTestSettings(range);
+		openTestSettings(range, continuousStep?.status === 'ready' ? continuousStep : undefined);
+	}
+
+	function continuousPhaseLabel(phase: 'batch' | 'cumulative') {
+		return phase === 'batch' ? '이번 묶음' : '오늘 누적';
+	}
+
+	function closeContinuousSettings() {
+		if (continuousSettingsDialog?.open) continuousSettingsDialog.close();
+	}
+
+	function beginContinuousStep(step: ContinuousLearningProgress) {
+		if (step.status !== 'ready' || !step.range || !step.dayRange || !step.phase) return;
+		continuousStep = step;
+		continuousBatchSize = step.settings.batchSize;
+		continuousDaySize = step.settings.daySize;
+		continuousError = '';
+		closeContinuousSettings();
+		if (step.phase === 'cumulative') {
+			openTestSettings(step.range, step);
+			return;
+		}
+		studyAll = false;
+		studyStart = step.range.start;
+		studyEnd = step.range.end;
+		studyMode = 'card';
+		studyIndex = 0;
+		studyError = '';
+		closePronunciation();
+		studyActive = true;
+	}
+
+	function resumeContinuous() {
+		if (data.continuous?.status === 'ready') beginContinuousStep(data.continuous);
+	}
+
+	function openContinuousSettings() {
+		if (!data.vocabulary.words.length) return;
+		if (data.continuous?.status === 'ready') {
+			beginContinuousStep(data.continuous);
+			return;
+		}
+		if (data.continuous?.status === 'in-progress') return;
+		continuousBatchSize = CONTINUOUS_BATCH_SIZE_DEFAULT;
+		continuousDaySize = CONTINUOUS_DAY_SIZE_DEFAULT;
+		continuousError = '';
+		continuousSettingsDialog?.showModal();
+	}
+
+	function startContinuous(event: SubmitEvent) {
+		event.preventDefault();
+		try {
+			const settings = parseContinuousLearningSettings(continuousBatchSize, continuousDaySize);
+			const first = data.vocabulary.words[0]?.number;
+			const last = data.vocabulary.words.at(-1)?.number;
+			if (first === undefined || last === undefined) throw new Error('테스트할 단어가 없습니다.');
+			const dayEnd = Math.min(last, first + settings.daySize - 1);
+			beginContinuousStep({
+				status: 'ready',
+				settings,
+				phase: 'batch',
+				range: { start: first, end: Math.min(dayEnd, first + settings.batchSize - 1) },
+				dayRange: { start: first, end: dayEnd },
+				completedDays: 0
+			});
+		} catch (error) {
+			continuousError = error instanceof Error ? error.message : '설정을 확인해 주세요.';
+		}
 	}
 
 	function pronunciationKey(word: Pick<Word, 'id' | 'english'>) {
@@ -586,11 +675,16 @@
 	{#if studyActive}
 		<header class="study-header">
 			<div>
-				<p class="eyebrow">암기 모드 · {data.vocabulary.title}</p>
-				<h1 id="study-title">단어 암기</h1>
+				<p class="eyebrow">
+					{continuousStep ? '연속 학습' : '암기 모드'} · {data.vocabulary.title}
+				</p>
+				<h1 id="study-title">{continuousStep ? '이번 묶음 암기' : '단어 암기'}</h1>
 				<p class="page-description">
-					{studyAll ? '전체 단어' : `${studyStart}~${studyEnd}번`} · {studyWords.length}개 · {studyMode ===
-					'card'
+					{continuousStep
+						? `${continuousStep.range?.start}~${continuousStep.range?.end}번 묶음`
+						: studyAll
+							? '전체 단어'
+							: `${studyStart}~${studyEnd}번`} · {studyWords.length}개 · {studyMode === 'card'
 						? '카드'
 						: '목록'}
 				</p>
@@ -752,6 +846,48 @@
 			</p>
 		{/if}
 
+		{#if data.continuous?.status === 'complete'}
+			<section class="result-strip continuous-strip" aria-label="연속 학습 완료">
+				<div>
+					<p class="eyebrow">연속 학습 완료</p>
+					<p class="result-summary">모든 단어를 묶음과 누적 테스트로 확인했어요.</p>
+					<p class="field-note">새 단어를 추가하면 다음 묶음을 이어서 시작할 수 있어요.</p>
+				</div>
+			</section>
+		{:else if data.continuous}
+			<section class="result-strip continuous-strip" aria-label="연속 학습 진행 상황">
+				<div>
+					<p class="eyebrow">연속 학습</p>
+					<p class="result-summary">
+						{#if data.continuous.status === 'in-progress'}
+							{continuousPhaseLabel(data.continuous.phase!)} 테스트가 진행 중이에요.
+						{:else}
+							다음은 {continuousPhaseLabel(data.continuous.phase!)} · {data.continuous.range
+								?.start}~{data.continuous.range?.end}번이에요.
+						{/if}
+					</p>
+					<p class="field-note">
+						한 묶음 {data.continuous.settings.batchSize}개 · 하루 누적 {data.continuous.settings
+							.daySize}개 ·
+						{data.continuous.completedDays}일 완료
+					</p>
+				</div>
+				{#if data.continuous.status === 'in-progress' && data.continuous.testId}
+					<a
+						class="button button-secondary"
+						href={resolve('/app/v/[id]/test/[testId]', {
+							id: data.vocabulary.id,
+							testId: data.continuous.testId
+						})}>테스트 이어서</a
+					>
+				{:else}
+					<button class="button button-primary" type="button" onclick={resumeContinuous}
+						>계속하기</button
+					>
+				{/if}
+			</section>
+		{/if}
+
 		<div class:selection-mode={selectionMode} class="word-toolbar">
 			<div class="word-toolbar-left">
 				<button
@@ -826,6 +962,24 @@
 							disabled={!data.vocabulary.words.length}
 							onclick={() => openTestSettings()}>테스트</button
 						>
+						{#if data.continuous?.status === 'in-progress' && data.continuous.testId}
+							<a
+								class="button button-secondary"
+								href={resolve('/app/v/[id]/test/[testId]', {
+									id: data.vocabulary.id,
+									testId: data.continuous.testId
+								})}>테스트 이어서</a
+							>
+						{:else if data.continuous?.status !== 'complete'}
+							<button
+								class="button button-secondary"
+								type="button"
+								disabled={!data.vocabulary.words.length}
+								onclick={openContinuousSettings}
+							>
+								{data.continuous?.status === 'ready' ? '연속 학습 계속' : '연속 학습'}
+							</button>
+						{/if}
 						<button
 							class="button button-secondary"
 							type="button"
@@ -1114,38 +1268,64 @@
 		</div>
 
 		<form method="post" action="?/startTest" use:enhance={enhanceStartTest} class="form-stack">
-			<fieldset class="choice-group">
-				<legend>범위</legend>
-				<label class="choice"
-					><input type="checkbox" name="all" bind:checked={testAll} /> 전체 단어</label
-				>
-				<div class="choice-options">
-					<div class="field">
-						<label for="test-start">시작 번호</label>
-						<input
-							id="test-start"
-							name="start"
-							type="number"
-							min={data.vocabulary.words[0]?.number ?? 1}
-							max={data.vocabulary.words.at(-1)?.number ?? 1}
-							bind:value={testStart}
-							disabled={testAll}
-						/>
+			{#if testContinuousStep?.status === 'ready'}
+				<fieldset class="choice-group">
+					<legend>연속 학습 단계</legend>
+					<p class="continuous-step-summary">
+						{continuousPhaseLabel(testContinuousStep.phase!)} ·
+						{testContinuousStep.range?.start}~{testContinuousStep.range?.end}번
+					</p>
+					<input type="hidden" name="continuous" value="on" />
+					<input
+						type="hidden"
+						name="continuousBatchSize"
+						value={testContinuousStep.settings.batchSize}
+					/>
+					<input
+						type="hidden"
+						name="continuousDaySize"
+						value={testContinuousStep.settings.daySize}
+					/>
+					<p class="field-note">
+						{testContinuousStep.phase === 'cumulative'
+							? '오늘 외운 단어를 한 번에 다시 확인합니다.'
+							: '이 묶음의 암기를 마친 뒤 시작한 테스트입니다.'}
+					</p>
+				</fieldset>
+			{:else}
+				<fieldset class="choice-group">
+					<legend>범위</legend>
+					<label class="choice"
+						><input type="checkbox" name="all" bind:checked={testAll} /> 전체 단어</label
+					>
+					<div class="choice-options">
+						<div class="field">
+							<label for="test-start">시작 번호</label>
+							<input
+								id="test-start"
+								name="start"
+								type="number"
+								min={data.vocabulary.words[0]?.number ?? 1}
+								max={data.vocabulary.words.at(-1)?.number ?? 1}
+								bind:value={testStart}
+								disabled={testAll}
+							/>
+						</div>
+						<div class="field">
+							<label for="test-end">끝 번호</label>
+							<input
+								id="test-end"
+								name="end"
+								type="number"
+								min={data.vocabulary.words[0]?.number ?? 1}
+								max={data.vocabulary.words.at(-1)?.number ?? 1}
+								bind:value={testEnd}
+								disabled={testAll}
+							/>
+						</div>
 					</div>
-					<div class="field">
-						<label for="test-end">끝 번호</label>
-						<input
-							id="test-end"
-							name="end"
-							type="number"
-							min={data.vocabulary.words[0]?.number ?? 1}
-							max={data.vocabulary.words.at(-1)?.number ?? 1}
-							bind:value={testEnd}
-							disabled={testAll}
-						/>
-					</div>
-				</div>
-			</fieldset>
+				</fieldset>
+			{/if}
 
 			<fieldset class="choice-group">
 				<legend>순서</legend>
@@ -1183,6 +1363,72 @@
 				<button class="button button-primary" type="submit" disabled={startPending}
 					>{startPending ? '준비 중…' : '테스트 시작'}</button
 				>
+			</div>
+		</form>
+	</div>
+</dialog>
+
+<dialog
+	bind:this={continuousSettingsDialog}
+	class="modal"
+	aria-labelledby="continuous-settings-title"
+	oncancel={closeContinuousSettings}
+>
+	<div class="modal-body">
+		<div class="modal-header">
+			<div>
+				<h2 id="continuous-settings-title">연속 학습</h2>
+				<p>묶음마다 암기하고 테스트한 뒤, 하루 분량을 누적으로 다시 확인합니다.</p>
+			</div>
+			<button
+				class="modal-close"
+				type="button"
+				aria-label="닫기"
+				title="닫기"
+				onclick={closeContinuousSettings}>×</button
+			>
+		</div>
+
+		<form class="form-stack" onsubmit={startContinuous}>
+			<div class="choice-options">
+				<div class="field">
+					<label for="continuous-batch-size">한 묶음 단어 수</label>
+					<input
+						id="continuous-batch-size"
+						type="number"
+						min={CONTINUOUS_BATCH_SIZE_MIN}
+						max={CONTINUOUS_BATCH_SIZE_MAX}
+						step="1"
+						inputmode="numeric"
+						bind:value={continuousBatchSize}
+						required
+					/>
+				</div>
+				<div class="field">
+					<label for="continuous-day-size">하루 누적 단어 수</label>
+					<input
+						id="continuous-day-size"
+						type="number"
+						min={CONTINUOUS_DAY_SIZE_MIN}
+						max={CONTINUOUS_DAY_SIZE_MAX}
+						step="1"
+						inputmode="numeric"
+						bind:value={continuousDaySize}
+						required
+					/>
+				</div>
+			</div>
+			<p class="field-note">
+				기본값은 한 묶음 10개, 하루 누적 40개입니다. 묶음 수는 하루 누적 수보다 클 수 없어요.
+			</p>
+			{#if continuousError}<p class="message message-error" role="alert" aria-live="assertive">
+					{continuousError}
+				</p>{/if}
+			<div class="modal-actions">
+				<button class="button button-secondary" type="button" onclick={closeContinuousSettings}
+					>취소</button
+				>
+				<button class="button button-primary" type="submit">연속 학습 시작</button>
 			</div>
 		</form>
 	</div>

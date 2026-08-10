@@ -2,6 +2,8 @@ import {
 	createTestSession,
 	latestCompletedTest,
 	normalizeOcrEntry,
+	nextContinuousLearningStep,
+	parseContinuousLearningSettings,
 	parseTestRange,
 	removeWords,
 	summarizeTest,
@@ -30,7 +32,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 						latest.items.filter((item) => item.result).map((item) => [item.wordId, item.result])
 					)
 				}
-			: null
+			: null,
+		continuous: nextContinuousLearningStep(vocabulary)
 	};
 };
 
@@ -322,16 +325,39 @@ export const actions: Actions = {
 			const vocabulary = await getVocabulary(locals.userId!, params.id);
 			if (!vocabulary)
 				return fail(404, { action: 'startTest', message: '단어장을 찾을 수 없습니다.' });
-			const range = parseTestRange(
-				vocabulary.words,
-				data.get('all') === 'on',
-				data.get('start'),
-				data.get('end')
-			);
 			const order = data.get('order') === 'random' ? 'random' : 'sequential';
 			const direction =
 				data.get('direction') === 'korean-to-english' ? 'korean-to-english' : 'english-to-korean';
-			created = createTestSession(range.words, range, order, direction);
+			if (data.get('continuous') === 'on') {
+				const settings = parseContinuousLearningSettings(
+					data.get('continuousBatchSize'),
+					data.get('continuousDaySize')
+				);
+				const step = nextContinuousLearningStep(vocabulary, settings);
+				const range = step?.range;
+				const dayRange = step?.dayRange;
+				if (step?.status !== 'ready' || !step.phase || !range || !dayRange)
+					throw new Error('진행 중인 연속 학습 테스트를 먼저 완료해 주세요.');
+				const words = vocabulary.words.filter(
+					(word) => word.number >= range.start && word.number <= range.end
+				);
+				if (!words.length) throw new Error('테스트할 단어가 없습니다.');
+				created = createTestSession(words, range, order, direction, Math.random, {
+					phase: step.phase,
+					batchSize: step.settings.batchSize,
+					daySize: step.settings.daySize,
+					dayStart: dayRange.start,
+					dayEnd: dayRange.end
+				});
+			} else {
+				const range = parseTestRange(
+					vocabulary.words,
+					data.get('all') === 'on',
+					data.get('start'),
+					data.get('end')
+				);
+				created = createTestSession(range.words, range, order, direction);
+			}
 			await updateVocabulary(locals.userId!, params.id, (current) => {
 				current.tests.push(created);
 				return current;

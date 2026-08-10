@@ -898,6 +898,26 @@ h2 {
 	font-size: 13px;
 }
 
+.continuous-strip {
+	align-items: center;
+}
+
+.continuous-strip .eyebrow {
+	margin-bottom: 4px;
+}
+
+.continuous-strip .field-note {
+	margin-top: 4px;
+}
+
+.continuous-step-summary {
+	margin: 0;
+	color: var(--ink);
+	font-size: 15px;
+	font-weight: 650;
+	font-variant-numeric: tabular-nums;
+}
+
 .filter-menu {
 	position: relative;
 	min-width: 180px;

@@ -31,6 +31,10 @@
 		return data.test.direction === 'english-to-korean' ? item.meaning : item.english;
 	}
 
+	function continuousPhaseLabel() {
+		return data.test.continuous?.phase === 'cumulative' ? '오늘 누적 테스트' : '이번 묶음 테스트';
+	}
+
 	function reveal(wordId: string) {
 		revealed.add(wordId);
 	}
@@ -74,14 +78,19 @@
 	<header class="test-header">
 		<div>
 			<p class="eyebrow">
-				{data.title}{#if data.rangeLabel}
+				{data.title}{#if data.test.continuous}
+					· 연속 학습 · {continuousPhaseLabel()}{:else if data.rangeLabel}
 					· {data.rangeLabel}{/if}
 			</p>
 			<h1>단어 테스트</h1>
 			<p class="page-description">
-				{data.test.direction === 'english-to-korean'
-					? '영어를 보고 한국어 뜻을 떠올려 보세요.'
-					: '한국어 뜻을 보고 영어 단어를 떠올려 보세요.'}
+				{data.test.continuous
+					? data.test.continuous.phase === 'cumulative'
+						? `${data.test.continuous.dayStart}~${data.test.continuous.dayEnd}번을 오늘 누적으로 확인해 보세요.`
+						: `${data.test.range.start}~${data.test.range.end}번 묶음을 확인해 보세요.`
+					: data.test.direction === 'english-to-korean'
+						? '영어를 보고 한국어 뜻을 떠올려 보세요.'
+						: '한국어 뜻을 보고 영어 단어를 떠올려 보세요.'}
 			</p>
 		</div>
 		<div class="progress-wrap" aria-label={`진행률 ${evaluated}/${data.test.items.length}`}>
@@ -101,7 +110,9 @@
 		<p class="message message-error" role="alert" aria-live="assertive">{form.message}</p>
 	{:else if completed}
 		<p class="message message-status" role="status" aria-live="polite">
-			완료한 테스트입니다. 결과를 다시 확인할 수 있어요.
+			{data.test.continuous
+				? `${continuousPhaseLabel()}를 완료했어요. 다음 단계는 단어장 화면에서 이어갈 수 있습니다.`
+				: '완료한 테스트입니다. 결과를 다시 확인할 수 있어요.'}
 		</p>
 	{/if}
 
