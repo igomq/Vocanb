@@ -12,6 +12,52 @@
 	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
+	const MAX_UPLOAD_REQUEST_BYTES = 90 * 1024 * 1024;
+	const TARGET_IMAGE_BYTES = 4 * 1024 * 1024;
+
+	function jpegBlob(canvas: HTMLCanvasElement, quality: number) {
+		return new Promise<Blob>((resolve, reject) =>
+			canvas.toBlob(
+				(blob) => (blob ? resolve(blob) : reject(new Error('이미지를 압축할 수 없습니다.'))),
+				'image/jpeg',
+				quality
+			)
+		);
+	}
+
+	async function prepareUploadFile(file: File) {
+		let bitmap: ImageBitmap | undefined;
+		try {
+			bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+			const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+			let width = Math.max(1, Math.round(bitmap.width * scale));
+			let height = Math.max(1, Math.round(bitmap.height * scale));
+			const canvas = document.createElement('canvas');
+			const context = canvas.getContext('2d');
+			if (!context) throw new Error('이미지를 압축할 수 없습니다.');
+			let blob: Blob | undefined;
+			for (let attempt = 0; attempt < 6; attempt += 1) {
+				canvas.width = width;
+				canvas.height = height;
+				context.drawImage(bitmap, 0, 0, width, height);
+				blob = await jpegBlob(canvas, 0.82);
+				if (blob.size <= TARGET_IMAGE_BYTES || Math.max(width, height) <= 1200) break;
+				width = Math.max(1, Math.round(width * 0.8));
+				height = Math.max(1, Math.round(height * 0.8));
+			}
+			if (!blob) return file;
+			if (blob.size >= file.size) return file;
+			return new File([blob], file.name.replace(/\.[^.]+$/u, '') + '.jpg', {
+				type: 'image/jpeg',
+				lastModified: file.lastModified
+			});
+		} catch {
+			return file;
+		} finally {
+			bitmap?.close();
+		}
+	}
+
 	let { data, form } = $props();
 	let filterAll = $state(true);
 	let selectedStatuses = new SvelteSet<ResultStatus>();
@@ -22,7 +68,9 @@
 	let uploadSettingsDialog: HTMLDialogElement | undefined = $state();
 	let uploadDialog: HTMLDialogElement | undefined = $state();
 	let photoInput: HTMLInputElement | undefined = $state();
-	let uploadTargetInput: HTMLInputElement | undefined = $state();
+	let uploadFiles = $state<File[]>([]);
+	let uploadMode = $state<'all' | 'targets'>('all');
+	let uploadTargets = $state<(number | undefined)[]>([]);
 	let editingWord = $state<Word | null>(null);
 	let editEnglish = $state('');
 	let editMeaning = $state('');
@@ -30,6 +78,9 @@
 	let uploadPending = $state(false);
 	let uploadError = $state('');
 	let uploadFileCount = $state(0);
+	let uploadStatus = $state('');
+	let uploadProgress = $state<number | undefined>();
+	let uploadProgressMax = $state(1);
 	let startPending = $state(false);
 	let testStart = $state(1);
 	let testEnd = $state(1);
@@ -261,14 +312,24 @@
 		}
 	}
 
-	async function loadPronunciationBatches(wordIds: string[]) {
-		for (let index = 0; index < wordIds.length; index += 32)
+	async function loadPronunciationBatches(
+		wordIds: string[],
+		onProgress?: (completed: number, total: number) => void
+	) {
+		for (let index = 0; index < wordIds.length; index += 32) {
 			await loadPronunciations(wordIds.slice(index, index + 32));
+			onProgress?.(Math.min(index + 32, wordIds.length), wordIds.length);
+		}
 	}
 
 	let pronunciationRequestStarted = '';
 	$effect(() => {
-		if (!pronunciationRequestKey || pronunciationRequestKey === pronunciationRequestStarted) return;
+		if (
+			uploadPending ||
+			!pronunciationRequestKey ||
+			pronunciationRequestKey === pronunciationRequestStarted
+		)
+			return;
 		pronunciationRequestStarted = pronunciationRequestKey;
 		void loadPronunciationBatches(pronunciationRequestWordIds);
 	});
@@ -285,15 +346,32 @@
 
 	function openUploadSettings() {
 		if (!photoInput?.files?.length) return;
-		uploadFileCount = photoInput.files.length;
-		if (uploadTargetInput) uploadTargetInput.value = '';
+		uploadFiles = Array.from(photoInput.files);
+		uploadFileCount = uploadFiles.length;
+		if (uploadFiles.length > 20) {
+			uploadError = '사진은 한 번에 최대 20장까지 추가할 수 있습니다.';
+			uploadDialog?.showModal();
+			return;
+		}
+		uploadMode = 'all';
+		uploadTargets = uploadFiles.map(() => 1);
 		uploadSettingsDialog?.showModal();
+	}
+
+	function resetUploadSelection() {
+		if (photoInput) photoInput.value = '';
+		uploadFiles = [];
+		uploadMode = 'all';
+		uploadTargets = [];
+		uploadFileCount = 0;
+		uploadStatus = '';
+		uploadProgress = undefined;
+		uploadProgressMax = 1;
 	}
 
 	function closeUploadSettings() {
 		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
-		if (photoInput) photoInput.value = '';
-		if (uploadTargetInput) uploadTargetInput.value = '';
+		resetUploadSelection();
 	}
 
 	function toggleFilterAll(event: Event) {
@@ -318,28 +396,50 @@
 		if (uploadPending) return;
 		if (uploadDialog?.open) uploadDialog.close();
 		uploadError = '';
-		if (photoInput) photoInput.value = '';
-		if (uploadTargetInput) uploadTargetInput.value = '';
+		resetUploadSelection();
 	}
 
 	beforeNavigate(({ cancel, willUnload }) => {
 		if (uploadPending && !willUnload) cancel();
 	});
 
-	const enhanceUpload: SubmitFunction = ({ formData, controller }) => {
+	const enhanceUpload: SubmitFunction = async ({ formData, controller, cancel }) => {
 		uploadPending = true;
 		uploadError = '';
-		uploadFileCount = formData.getAll('images').length;
+		const files = formData
+			.getAll('images')
+			.filter((value): value is File => value instanceof File && value.size > 0);
+		uploadFileCount = files.length;
+		uploadProgressMax = Math.max(1, files.length);
+		uploadProgress = 0;
 		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
 		uploadDialog?.showModal();
+		const prepared: File[] = [];
+		for (const [index, file] of files.entries()) {
+			uploadStatus = `사진 ${index + 1}/${files.length} 업로드 준비 중`;
+			await tick();
+			prepared.push(await prepareUploadFile(file));
+			uploadProgress = index + 1;
+		}
+		const totalBytes = prepared.reduce((total, file) => total + file.size, 0);
+		if (totalBytes > MAX_UPLOAD_REQUEST_BYTES) {
+			cancel();
+			uploadPending = false;
+			uploadError = '사진을 압축해도 전체 용량이 90MB를 넘습니다. 나누어 올려 주세요.';
+			uploadProgress = undefined;
+			return;
+		}
+		formData.delete('images');
+		for (const file of prepared) formData.append('images', file);
+		uploadStatus = `${files.length}장의 사진에서 단어를 읽고 저장하는 중`;
+		uploadProgress = undefined;
 		let cleaned = false;
 		const cleanup = (close: boolean) => {
 			if (cleaned) return;
 			cleaned = true;
 			uploadPending = false;
 			if (close && uploadDialog?.open) uploadDialog.close();
-			if (close && photoInput) photoInput.value = '';
-			if (close && uploadTargetInput) uploadTargetInput.value = '';
+			if (close) resetUploadSelection();
 		};
 		controller.signal.addEventListener(
 			'abort',
@@ -353,8 +453,25 @@
 		return async ({ update, result }) => {
 			try {
 				await update();
-				cleanup(result.type === 'success');
-			} catch {
+				if (result.type !== 'success') {
+					cleanup(false);
+					return;
+				}
+				await tick();
+				const wordIds = pronunciationRequestWordIds;
+				if (wordIds.length) {
+					uploadProgress = 0;
+					uploadProgressMax = wordIds.length;
+					uploadStatus = `발음 0/${wordIds.length} 받아오는 중`;
+					await loadPronunciationBatches(wordIds, (completed, total) => {
+						uploadProgress = completed;
+						uploadStatus = `발음 ${completed}/${total} 받아오는 중`;
+					});
+					pronunciationRequestStarted = pronunciationRequestKey;
+				}
+				cleanup(true);
+			} catch (error) {
+				console.error('Upload result handling failed:', error);
 				uploadError =
 					'분석 결과를 확인하지 못했습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
 				cleanup(false);
@@ -889,24 +1006,42 @@
 		</div>
 
 		<div class="form-stack">
-			<div class="field">
-				<label for="upload-target">추출할 단어 수 (선택)</label>
-				<input
-					bind:this={uploadTargetInput}
-					id="upload-target"
-					name="targetWordCount"
-					form="photo-upload-form"
-					type="number"
-					min="1"
-					max={uploadFileCount * 500}
-					step="1"
-					inputmode="numeric"
-					placeholder="전체 추출"
-				/>
-				<p class="field-note">
-					비워 두면 사진에 보이는 단어를 모두 추출합니다. 최대 {uploadFileCount * 500}개
-				</p>
-			</div>
+			<fieldset class="choice-group">
+				<legend>추출 방식</legend>
+				<label class="choice"
+					><input type="radio" bind:group={uploadMode} value="all" /> 사진에 보이는 주요 단어 전체 추출</label
+				>
+				<label class="choice"
+					><input type="radio" bind:group={uploadMode} value="targets" /> 사진별 목표 개수 지정</label
+				>
+			</fieldset>
+			{#if uploadMode === 'targets'}
+				<div class="form-stack">
+					{#each uploadFiles as file, index (file)}
+						<div class="field">
+							<label for={`upload-target-${index}`}>사진 {index + 1} 목표 개수 ({file.name})</label>
+							<input
+								id={`upload-target-${index}`}
+								name="targetWordCounts"
+								form="photo-upload-form"
+								type="number"
+								min="1"
+								max="500"
+								step="1"
+								inputmode="numeric"
+								required
+								bind:value={uploadTargets[index]}
+							/>
+						</div>
+					{/each}
+					<p class="field-note" aria-live="polite">
+						총 목표 개수: {uploadTargets.reduce(
+							(total, target) => (total ?? 0) + (target ?? 0),
+							0
+						)}개
+					</p>
+				</div>
+			{/if}
 			<div class="modal-actions">
 				<button class="button button-secondary" type="button" onclick={closeUploadSettings}
 					>취소</button
@@ -927,13 +1062,24 @@
 	oncancel={(event) => event.preventDefault()}
 >
 	<div class="modal-body ocr-modal-body">
-		<h2 id="ocr-progress-title">{uploadPending ? 'OCR 진행 중' : '사진 분석 실패'}</h2>
+		<h2 id="ocr-progress-title">{uploadPending ? '사진 추가 중' : '사진 분석 실패'}</h2>
 		{#if uploadPending}
-			<p id="ocr-progress-description">
-				{uploadFileCount}장의 사진에서 단어를 읽고 있어요. 분석이 끝날 때까지 앱 안에서 다른
-				페이지로 이동할 수 없습니다.
+			<p id="ocr-progress-description" class="ocr-status" role="status" aria-live="polite">
+				{uploadStatus || `${uploadFileCount}장의 사진을 준비하는 중`}
 			</p>
-			<progress class="ocr-progress" aria-label="OCR 처리 중"></progress>
+			{#if uploadProgress === undefined}
+				<progress
+					class="ocr-progress"
+					aria-label={uploadStatus || `${uploadFileCount}장의 사진을 준비하는 중`}
+				></progress>
+			{:else}
+				<progress
+					class="ocr-progress"
+					aria-label={uploadStatus}
+					value={uploadProgress}
+					max={uploadProgressMax}
+				></progress>
+			{/if}
 			<p class="ocr-warning">
 				새로고침하거나 창을 닫지 마세요. 분석 결과가 저장되지 않을 수 있어요.
 			</p>

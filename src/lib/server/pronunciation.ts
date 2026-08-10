@@ -483,13 +483,20 @@ function extractIpa(payload: unknown) {
 }
 
 export async function lookupPronunciation(english: string): Promise<Pronunciation | null> {
-	const response = await fetch(
-		`${DICTIONARY_URL}${encodeURIComponent(english.trim().toLowerCase())}`,
-		{
+	let response: Response | undefined;
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		response = await fetch(`${DICTIONARY_URL}${encodeURIComponent(english.trim().toLowerCase())}`, {
 			headers: { accept: 'application/json' },
 			signal: AbortSignal.timeout(4_000)
-		}
-	);
+		});
+		if (response.status !== 429 || attempt === 2) break;
+		const retryAfterHeader = response.headers.get('retry-after');
+		const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
+		await new Promise((resolve) =>
+			setTimeout(resolve, Number.isFinite(retryAfter) ? Math.min(retryAfter * 1_000, 5_000) : 500)
+		);
+	}
+	if (!response) throw new Error('Dictionary request failed.');
 	if (response.status === 404) return null;
 	if (!response.ok) throw new Error(`Dictionary request failed (${response.status}).`);
 	const rawIpa = extractIpa(await response.json());
@@ -527,11 +534,13 @@ export function resolvePronunciationLookup(
 		return { result, persist: result };
 	}
 	if (word.pronunciation === undefined) {
+		const result = {
+			english: word.english,
+			pronunciation: dictionaryResult
+		} satisfies PronunciationLookup;
 		return {
-			result: {
-				english: word.english,
-				pronunciation: dictionaryResult
-			} satisfies PronunciationLookup
+			result,
+			persist: result
 		};
 	}
 	return {};

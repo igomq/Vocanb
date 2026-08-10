@@ -15,7 +15,9 @@ fi
 
 awk -v secret="$secret" '
     /^SESSION_SECRET=/ { print "SESSION_SECRET=" secret; next }
+    /^BODY_SIZE_LIMIT=/ { print "BODY_SIZE_LIMIT=92M"; body_limit=1; next }
     { print }
+    END { if (!body_limit) print "BODY_SIZE_LIMIT=92M" }
 ' "$source_file" > "$temporary"
 
 if grep -qE '=(|<[^>]+>|__[^_]+__)$$' "$temporary"; then

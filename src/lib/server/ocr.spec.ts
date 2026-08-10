@@ -1,6 +1,6 @@
 import { OcrResponseSchema } from '$lib/domain';
 import { describe, expect, it } from 'vitest';
-import { limitOcrEntries, mapWithConcurrency, type OcrProvider } from './ocr';
+import { mapWithConcurrency, type OcrProvider } from './ocr';
 import { OCR_JSON_SCHEMA, buildOcrUserInstruction } from './ocr-prompt';
 
 describe('OCR provider boundary', () => {
@@ -32,38 +32,13 @@ describe('OCR provider boundary', () => {
 	});
 
 	it('prioritizes prominent headwords and gates secondary words on a target', () => {
-		expect(buildOcrUserInstruction()).toMatch(/large or bold English headwords/);
-		expect(buildOcrUserInstruction()).toMatch(/only default entries/);
+		expect(buildOcrUserInstruction()).toMatch(/visually prominent main English headwords/);
+		expect(buildOcrUserInstruction()).toMatch(/Ignore small incidental words, fragments/);
 		const targeted = buildOcrUserInstruction(3);
 		expect(targeted).toMatch(/prominent headwords alone do not reach the target/);
-		expect(targeted).toMatch(/clearly paired/);
+		expect(targeted).toMatch(/complete printed vocabulary entry/);
+		expect(targeted).toMatch(/Never use fragments or incidental text/);
 		expect(targeted).toMatch(/hard maximum target/);
-	});
-
-	it('caps batch OCR entries in image and reading order', () => {
-		const response = (entries: [number, string][]) =>
-			OcrResponseSchema.parse({
-				entries: entries.map(([sourceOrder, english]) => ({
-					sourceOrder,
-					english,
-					meaning: `${english} 뜻`,
-					uncertain: false
-				}))
-			});
-		const limited = limitOcrEntries(
-			[
-				response([
-					[2, 'second'],
-					[1, 'first']
-				]),
-				response([[1, 'third']])
-			],
-			2
-		);
-		expect(limited.flatMap(({ entries }) => entries.map(({ english }) => english))).toEqual([
-			'first',
-			'second'
-		]);
 	});
 
 	it('bounds concurrent OCR work and preserves input order', async () => {

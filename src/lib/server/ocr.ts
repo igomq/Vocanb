@@ -38,18 +38,6 @@ export async function mapWithConcurrency<T, R>(
 	return results;
 }
 
-export function limitOcrEntries(responses: readonly OcrResponse[], targetEntries?: number) {
-	let remaining = targetEntries;
-	return responses.map((response) => {
-		const entries = [...response.entries].sort(
-			(left, right) => left.sourceOrder - right.sourceOrder
-		);
-		const selected = remaining === undefined ? entries : entries.slice(0, remaining);
-		if (remaining !== undefined) remaining -= selected.length;
-		return { ...response, entries: selected };
-	});
-}
-
 function retryable(error: unknown) {
 	const status = Number(
 		(error as { status?: number; code?: number }).status || (error as { code?: number }).code

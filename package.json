@@ -2,6 +2,7 @@
 	"name": "vocanb",
 	"private": true,
 	"version": "0.0.1",
+	"license": "MIT",
 	"packageManager": "pnpm@10.33.0",
 	"engines": {
 		"node": ">=24 <25",

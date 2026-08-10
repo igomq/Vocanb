@@ -9,7 +9,7 @@ import {
 	type Word
 } from '$lib/domain';
 import { normalizeUpload } from '$lib/server/image';
-import { limitOcrEntries, mapWithConcurrency, ocrProvider } from '$lib/server/ocr';
+import { mapWithConcurrency, ocrProvider } from '$lib/server/ocr';
 import { getVocabulary, imagePath, updateVocabulary, uploadDirectory } from '$lib/server/storage';
 import { fail, redirect } from '@sveltejs/kit';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -69,16 +69,29 @@ async function deleteVocabularyWords(
 
 export const actions: Actions = {
 	upload: async ({ request, locals, params }) => {
-		const data = await request.formData();
+		let data: FormData;
+		try {
+			data = await request.formData();
+		} catch (error) {
+			console.error(
+				'Upload form parsing failed:',
+				{ method: request.method, path: new URL(request.url).pathname },
+				error
+			);
+			return fail(400, {
+				action: 'upload',
+				message: '업로드 요청을 읽지 못했습니다. 사진을 다시 선택해 주세요.'
+			});
+		}
 		const files = data
 			.getAll('images')
 			.filter((value): value is File => value instanceof File && value.size > 0);
 		if (!files.length)
 			return fail(400, { action: 'upload', message: '추가할 사진을 선택해 주세요.' });
-		if (files.length > 10)
+		if (files.length > 20)
 			return fail(400, {
 				action: 'upload',
-				message: '사진은 한 번에 최대 10장까지 추가할 수 있습니다.'
+				message: '사진은 한 번에 최대 20장까지 추가할 수 있습니다.'
 			});
 		if (files.reduce((total, file) => total + file.size, 0) > 90 * 1024 * 1024) {
 			return fail(400, {
@@ -86,16 +99,23 @@ export const actions: Actions = {
 				message: '한 번에 올리는 사진은 모두 합쳐 90MB 이하여야 합니다.'
 			});
 		}
-		const targetValue = String(data.get('targetWordCount') || '').trim();
-		let targetWordCount: number | undefined;
-		if (targetValue) {
-			const parsedTarget = Number(targetValue);
-			if (!Number.isInteger(parsedTarget) || parsedTarget < 1 || parsedTarget > files.length * 500)
+		const targetValues = data.getAll('targetWordCounts');
+		let targetWordCounts: number[] | undefined;
+		if (targetValues.length) {
+			if (targetValues.length !== files.length)
 				return fail(400, {
 					action: 'upload',
-					message: `단어 수는 1~${files.length * 500} 사이의 정수로 입력해 주세요.`
+					message: '사진별 목표 개수를 사진 수만큼 입력해 주세요.'
 				});
-			targetWordCount = parsedTarget;
+			const parsedTargets = targetValues.map((value) =>
+				typeof value === 'string' ? Number(value.trim()) : Number.NaN
+			);
+			if (parsedTargets.some((target) => !Number.isInteger(target) || target < 1 || target > 500))
+				return fail(400, {
+					action: 'upload',
+					message: '각 사진의 목표 개수는 1~500 사이의 정수로 입력해 주세요.'
+				});
+			targetWordCounts = parsedTargets;
 		}
 
 		let normalized: Buffer[];
@@ -110,10 +130,8 @@ export const actions: Actions = {
 
 		let results: Awaited<ReturnType<typeof ocrProvider.extract>>[];
 		try {
-			const targetPerImage =
-				targetWordCount === undefined ? undefined : Math.min(targetWordCount, 500);
-			results = await mapWithConcurrency(normalized, 2, (bytes) =>
-				ocrProvider.extract(bytes, targetPerImage)
+			results = await mapWithConcurrency(normalized, 2, (bytes, index) =>
+				ocrProvider.extract(bytes, targetWordCounts?.[index])
 			);
 		} catch (error) {
 			console.error('OCR failed:', error instanceof Error ? error.message : 'unknown error');
@@ -129,10 +147,11 @@ export const actions: Actions = {
 			bytes: Buffer;
 			words: Omit<Word, 'number'>[];
 		}[] = [];
-		const limitedResults = limitOcrEntries(results, targetWordCount);
 		for (const [index, bytes] of normalized.entries()) {
-			const result = limitedResults[index];
-			const entries = result.entries.map(normalizeOcrEntry).filter(({ meaning }) => meaning);
+			const entries = [...results[index].entries]
+				.sort((left, right) => left.sourceOrder - right.sourceOrder)
+				.map(normalizeOcrEntry)
+				.filter(({ meaning }) => meaning);
 			if (!entries.length) continue;
 			const now = new Date().toISOString();
 			const imageId = crypto.randomUUID();
@@ -181,10 +200,7 @@ export const actions: Actions = {
 			return {
 				success: true,
 				action: 'upload',
-				message:
-					targetWordCount === undefined
-						? `${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
-						: `요청한 ${targetWordCount}개 중 ${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
+				message: `${prepared.reduce((sum, image) => sum + image.words.length, 0)}개 단어를 추가했습니다.`
 			};
 		} catch (error) {
 			const cleanup = await Promise.allSettled(written.map((path) => rm(path, { force: true })));

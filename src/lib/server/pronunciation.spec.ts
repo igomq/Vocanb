@@ -32,6 +32,19 @@ describe('pronunciation lookup', () => {
 		expect(await lookupPronunciation('not-a-word')).toBeNull();
 	});
 
+	it('honors a dictionary rate limit before retrying', async () => {
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '0' } }))
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify([{ phonetic: '/test/' }]), { status: 200 })
+			);
+		vi.stubGlobal('fetch', fetch);
+
+		expect(await lookupPronunciation('retry-word')).toMatchObject({ ipa: '[test]' });
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
 	it('does not apply an in-flight result after the spelling changes', () => {
 		const words = [
 			{ id: 'changed', english: 'orange', pronunciation: undefined },
@@ -83,7 +96,7 @@ describe('pronunciation lookup', () => {
 		expect(resolvePronunciationLookup(word, dictionary)).toEqual({});
 	});
 
-	it('keeps a local guide as an unpersisted fallback for a new word', () => {
+	it('persists a local guide so later guide refreshes do not repeat dictionary lookup', () => {
 		const result = resolvePronunciationLookup(
 			{ english: 'apple', pronunciation: undefined },
 			{ ipa: '[ˈæpəl]', guide: '애플' }
@@ -92,6 +105,6 @@ describe('pronunciation lookup', () => {
 			english: 'apple',
 			pronunciation: { ipa: '[ˈæpəl]', guide: '애플' }
 		});
-		expect(result.persist).toBeUndefined();
+		expect(result.persist).toEqual(result.result);
 	});
 });
