@@ -1068,7 +1068,10 @@
 				{uploadStatus || `${uploadFileCount}장의 사진을 준비하는 중`}
 			</p>
 			{#if uploadProgress === undefined}
-				<progress class="ocr-progress" aria-label={uploadStatus || `${uploadFileCount}장의 사진을 준비하는 중`}></progress>
+				<progress
+					class="ocr-progress"
+					aria-label={uploadStatus || `${uploadFileCount}장의 사진을 준비하는 중`}
+				></progress>
 			{:else}
 				<progress
 					class="ocr-progress"
