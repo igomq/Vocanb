@@ -631,24 +631,24 @@ h2 {
 .word-toolbar-group {
 	display: flex;
 	min-width: 0;
-	flex: 1 0 max-content;
+	flex: 0 1 auto;
 	flex-wrap: wrap;
 	gap: 8px;
-}
-
-.word-toolbar-primary-actions {
-	flex: 0 1 auto;
 }
 
 .word-toolbar-group form,
 .word-toolbar-group > .button {
 	display: flex;
 	min-width: 0;
-	flex: 1 1 0;
+	flex: 0 1 auto;
 }
 
 .word-toolbar-group form .button {
-	width: 100%;
+	width: auto;
+}
+
+.word-toolbar-group .button {
+	white-space: nowrap;
 }
 
 .title-link {
