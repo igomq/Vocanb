@@ -1,5 +1,6 @@
 import {
 	createTestSession,
+	latestCompletedResults,
 	latestCompletedTest,
 	normalizeOcrEntry,
 	nextContinuousLearningStep,
@@ -7,7 +8,8 @@ import {
 	parseTestRange,
 	ResultStatusSchema,
 	removeWords,
-	summarizeTest,
+	summarizeResults,
+	toggleWordStar,
 	type ResultStatus,
 	type TestSession,
 	type Word
@@ -23,16 +25,15 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const vocabulary = await getVocabulary(locals.userId!, params.id);
 	if (!vocabulary) redirect(303, '/app');
 	const latest = latestCompletedTest(vocabulary);
+	const latestResults = latestCompletedResults(vocabulary);
 	const vocabularyView = { ...vocabulary, tests: undefined };
 	return {
 		vocabulary: vocabularyView,
-		latestResult: latest
+		latestResult: latestResults.size
 			? {
-					id: latest.id,
-					summary: summarizeTest(latest, vocabulary.words.length),
-					results: Object.fromEntries(
-						latest.items.filter((item) => item.result).map((item) => [item.wordId, item.result])
-					)
+					id: latest?.id,
+					summary: summarizeResults(latestResults.values(), vocabulary.words.length),
+					results: Object.fromEntries(latestResults)
 				}
 			: null,
 		continuous: nextContinuousLearningStep(vocabulary)
@@ -172,6 +173,7 @@ export const actions: Actions = {
 						...(entry.partOfSpeech ? { partOfSpeech: entry.partOfSpeech } : {}),
 						sourceImageId: imageId,
 						uncertain: entry.uncertain,
+						starred: false,
 						createdAt: now,
 						updatedAt: now
 					};
@@ -238,6 +240,7 @@ export const actions: Actions = {
 					...(partOfSpeech ? { partOfSpeech } : {}),
 					sourceImageId: null,
 					uncertain: false,
+					starred: false,
 					createdAt: now,
 					updatedAt: now
 				});
@@ -281,6 +284,20 @@ export const actions: Actions = {
 			return fail(400, {
 				action: 'updateWord',
 				message: '단어를 수정하지 못했습니다. 입력값을 확인해 주세요.'
+			});
+		}
+	},
+	toggleStar: async ({ request, locals, params }) => {
+		const wordId = String((await request.formData()).get('wordId') || '');
+		try {
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) =>
+				toggleWordStar(vocabulary, wordId)
+			);
+			return { success: true, action: 'toggleStar' };
+		} catch (error) {
+			return fail(400, {
+				action: 'toggleStar',
+				message: error instanceof Error ? error.message : '별표를 저장하지 못했습니다.'
 			});
 		}
 	},
@@ -354,8 +371,8 @@ export const actions: Actions = {
 					studyMode: step.settings.studyMode
 				});
 			} else if (data.get('source') === 'recent-result') {
-				const latest = latestCompletedTest(vocabulary);
-				if (!latest) throw new Error('완료된 테스트 결과가 없습니다.');
+				const latestResults = latestCompletedResults(vocabulary);
+				if (!latestResults.size) throw new Error('완료된 테스트 결과가 없습니다.');
 				const statusValues = data.getAll('statuses');
 				if (!statusValues.length) throw new Error('결과 상태를 하나 이상 선택해 주세요.');
 				const statuses = new Set<ResultStatus>();
@@ -365,12 +382,16 @@ export const actions: Actions = {
 					statuses.add(status.data);
 				}
 				const matchingWordIds = new Set(
-					latest.items
-						.filter((item) => item.result && statuses.has(item.result))
-						.map((item) => item.wordId)
+					[...latestResults].filter(([, result]) => statuses.has(result)).map(([wordId]) => wordId)
 				);
 				const words = vocabulary.words.filter((word) => matchingWordIds.has(word.id));
 				if (!words.length) throw new Error('선택한 결과의 단어가 없습니다.');
+				const numbers = words.map(({ number }) => number);
+				const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
+				created = createTestSession(words, range, order, direction);
+			} else if (data.get('source') === 'starred') {
+				const words = vocabulary.words.filter((word) => word.starred);
+				if (!words.length) throw new Error('별표한 단어가 없습니다.');
 				const numbers = words.map(({ number }) => number);
 				const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
 				created = createTestSession(words, range, order, direction);

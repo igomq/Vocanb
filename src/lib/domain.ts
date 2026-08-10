@@ -92,6 +92,7 @@ export const WordSchema = z
 		pronunciation: PronunciationSchema.nullable().optional(),
 		sourceImageId: z.string().uuid().nullable(),
 		uncertain: z.boolean().default(false),
+		starred: z.boolean().default(false).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string()
 	})
@@ -226,6 +227,15 @@ export function removeWords(vocabulary: Vocabulary, wordIds: ReadonlySet<string>
 	};
 }
 
+export function toggleWordStar(vocabulary: Vocabulary, wordId: string) {
+	if (!WordSchema.shape.id.safeParse(wordId).success) throw new Error('단어를 찾을 수 없습니다.');
+	const word = vocabulary.words.find((candidate) => candidate.id === wordId);
+	if (!word) throw new Error('단어를 찾을 수 없습니다.');
+	word.starred = !word.starred;
+	word.updatedAt = new Date().toISOString();
+	return vocabulary;
+}
+
 export function parseTestRange(
 	words: Word[],
 	all: boolean,
@@ -279,12 +289,30 @@ export function createTestSession(
 }
 
 export function summarizeTest(test: TestSession, totalWords: number) {
-	const evaluated = test.items.filter((item) => item.result);
+	return summarizeResults(
+		test.items.flatMap((item) => (item.result ? [item.result] : [])),
+		totalWords
+	);
+}
+
+export function summarizeResults(results: Iterable<ResultStatus>, totalWords: number) {
+	const evaluated = [...results];
 	return {
-		correct: evaluated.filter((item) => item.result === 'correct').length,
+		correct: evaluated.filter((result) => result === 'correct').length,
 		tested: evaluated.length,
 		total: totalWords
 	};
+}
+
+export function latestCompletedResults(vocabulary: Pick<Vocabulary, 'tests'>) {
+	const results = new Map<string, ResultStatus>();
+	for (const test of [...vocabulary.tests].reverse()) {
+		if (!test.completedAt) continue;
+		for (const item of test.items) {
+			if (item.result && !results.has(item.wordId)) results.set(item.wordId, item.result);
+		}
+	}
+	return results;
 }
 
 export function latestCompletedTest(vocabulary: Vocabulary) {

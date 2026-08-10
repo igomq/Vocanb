@@ -409,6 +409,36 @@ h2 {
 	background: var(--soft);
 }
 
+.star-button {
+	display: inline-grid;
+	width: 44px;
+	height: 44px;
+	place-items: center;
+	border: 1px solid transparent;
+	border-radius: 9px;
+	background: transparent;
+	color: var(--muted);
+	font-size: 23px;
+	line-height: 1;
+	transition:
+		background-color 160ms ease,
+		border-color 160ms ease,
+		color 160ms ease,
+		transform 160ms ease;
+}
+
+.star-button:hover,
+.star-button[aria-pressed='true'] {
+	border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+	background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+	color: var(--warning);
+}
+
+.star-button:active {
+	transform: scale(0.92);
+	transition-duration: 0ms;
+}
+
 .message {
 	margin: 16px 0;
 	border-radius: 9px;
@@ -623,6 +653,10 @@ h2 {
 	width: 100%;
 }
 
+.star-filter {
+	margin-left: auto;
+}
+
 .word-toolbar-right {
 	display: grid;
 	width: 100%;
@@ -678,7 +712,7 @@ h2 {
 
 .word-row {
 	display: grid;
-	grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) auto;
+	grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr) 44px auto;
 	min-height: 52px;
 	align-items: center;
 	gap: 12px;
@@ -687,7 +721,7 @@ h2 {
 }
 
 .word-list-selecting .word-row {
-	grid-template-columns: 28px 44px minmax(0, 1fr) minmax(0, 1fr) auto;
+	grid-template-columns: 28px 44px minmax(0, 1fr) minmax(0, 1fr) 44px auto;
 }
 
 .word-select {
@@ -1135,6 +1169,13 @@ h2 {
 	gap: 14px;
 }
 
+.test-row-tools,
+.study-card-tools {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
 .test-prompt {
 	margin: 0;
 	font-size: 16px;
@@ -1307,10 +1348,15 @@ h2 {
 }
 
 .study-number {
-	margin-bottom: 18px;
 	color: var(--muted);
 	font-size: 12px;
 	font-variant-numeric: tabular-nums;
+}
+
+.study-card-tools {
+	width: 100%;
+	justify-content: space-between;
+	margin-bottom: 18px;
 }
 
 .study-card .study-word-line {
@@ -1362,7 +1408,7 @@ h2 {
 .study-word-row {
 	display: grid;
 	min-height: 72px;
-	grid-template-columns: 44px minmax(0, 0.9fr) minmax(0, 1.1fr);
+	grid-template-columns: 44px minmax(0, 0.9fr) minmax(0, 1.1fr) 44px;
 	align-items: start;
 	gap: 12px;
 	border-bottom: 1px solid var(--line);
@@ -1516,12 +1562,12 @@ h2 {
 	}
 
 	.word-row {
-		grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 42px;
+		grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 44px 42px;
 		gap: 8px;
 	}
 
 	.word-list-selecting .word-row {
-		grid-template-columns: 24px 34px minmax(0, 1fr) minmax(0, 1fr) 42px;
+		grid-template-columns: 24px 34px minmax(0, 1fr) minmax(0, 1fr) 44px 42px;
 	}
 
 	.word-number {
@@ -1574,7 +1620,7 @@ h2 {
 	}
 
 	.study-word-row {
-		grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr);
+		grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 44px;
 		gap: 8px;
 		padding-right: 10px;
 		padding-left: 10px;
@@ -1604,12 +1650,12 @@ h2 {
 	}
 
 	.word-row {
-		grid-template-columns: 27px minmax(0, 1fr) minmax(0, 1fr) 36px;
+		grid-template-columns: 27px minmax(0, 1fr) minmax(0, 1fr) 44px 44px;
 		gap: 6px;
 	}
 
 	.word-list-selecting .word-row {
-		grid-template-columns: 22px 27px minmax(0, 1fr) minmax(0, 1fr) 36px;
+		grid-template-columns: 22px 27px minmax(0, 1fr) minmax(0, 1fr) 44px 44px;
 	}
 
 	.word-cell-content {
@@ -1720,7 +1766,7 @@ h2 {
 	}
 
 	.study-word-row {
-		grid-template-columns: 27px minmax(0, 0.9fr) minmax(0, 1.1fr);
+		grid-template-columns: 27px minmax(0, 0.9fr) minmax(0, 1.1fr) 44px;
 		gap: 6px;
 		padding: 10px 6px;
 	}
@@ -1758,6 +1804,7 @@ h2 {
 	}
 
 	button:active,
+	.star-button:active,
 	a.button:active,
 	.sidebar-link:active,
 	.word-edit:active {

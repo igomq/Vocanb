@@ -132,7 +132,22 @@
 								class="part-of-speech">{item.partOfSpeech}</span
 							>{/if}{promptFor(item)}
 					</p>
-					<span class="test-number">{item.number}번</span>
+					<div class="test-row-tools">
+						<form method="post" action="?/toggleStar" use:enhance>
+							<input type="hidden" name="wordId" value={item.wordId} />
+							<button
+								class="star-button"
+								type="submit"
+								aria-label={data.stars[item.wordId]
+									? `${item.english} 별표 해제`
+									: `${item.english} 별표`}
+								aria-pressed={data.stars[item.wordId]}
+							>
+								<span aria-hidden="true">{data.stars[item.wordId] ? '★' : '☆'}</span>
+							</button>
+						</form>
+						<span class="test-number">{item.number}번</span>
+					</div>
 				</div>
 
 				{#if revealed.has(item.wordId) || item.result}

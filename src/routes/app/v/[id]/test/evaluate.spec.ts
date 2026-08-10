@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { actions } from './[testId]/+page.server';
+import { actions, load } from './[testId]/+page.server';
 
 const userId = 'u_0123456789abcdef0123456789abcdef';
 let directory: string;
@@ -27,6 +27,7 @@ describe('test evaluation action', () => {
 			meaning: `뜻-${number}`,
 			sourceImageId: null,
 			uncertain: false,
+			starred: false,
 			createdAt: now,
 			updatedAt: now
 		}));
@@ -59,6 +60,52 @@ describe('test evaluation action', () => {
 		]);
 	});
 
+	it('stars the master word from a test without changing the snapshot', async () => {
+		const vocabulary = await createVocabulary(userId, '테스트 별표', '');
+		const now = new Date().toISOString();
+		const word: Word = {
+			id: crypto.randomUUID(),
+			number: 1,
+			english: 'remember',
+			meaning: '기억하다',
+			sourceImageId: null,
+			uncertain: false,
+			starred: false,
+			createdAt: now,
+			updatedAt: now
+		};
+		const session = createTestSession(
+			[word],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean'
+		);
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words: [word],
+			tests: [session]
+		}));
+
+		const form = new FormData();
+		form.set('wordId', word.id);
+		expect(
+			await actions.toggleStar!({
+				request: new Request('http://localhost', { method: 'POST', body: form }),
+				locals: { userId },
+				params: { id: vocabulary.id, testId: session.id }
+			} as never)
+		).toMatchObject({ success: true });
+
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.words[0].starred).toBe(true);
+		expect(saved?.tests[0].items[0]).not.toHaveProperty('starred');
+		const page = (await load!({
+			locals: { userId },
+			params: { id: vocabulary.id, testId: session.id }
+		} as never))!;
+		expect(page.stars).toEqual({ [word.id]: true });
+	});
+
 	it('redirects to the next batch automatically', async () => {
 		const vocabulary = await createVocabulary(userId, '연속 묶음 전환', '');
 		const now = new Date().toISOString();
@@ -69,6 +116,7 @@ describe('test evaluation action', () => {
 			meaning: `뜻-${number}`,
 			sourceImageId: null,
 			uncertain: false,
+			starred: false,
 			createdAt: now,
 			updatedAt: now
 		}));
@@ -107,6 +155,7 @@ describe('test evaluation action', () => {
 			meaning: `뜻-${number}`,
 			sourceImageId: null,
 			uncertain: false,
+			starred: false,
 			createdAt: now,
 			updatedAt: now
 		}));

@@ -72,7 +72,7 @@
 	let filterAll = $state(true);
 	let selectedStatuses = new SvelteSet<ResultStatus>();
 	let testAll = $state(true);
-	let testSource = $state<'range' | 'recent-result'>('range');
+	let testSource = $state<'range' | 'recent-result' | 'starred'>('range');
 	let testStatuses = new SvelteSet<ResultStatus>();
 	let testDialog: HTMLDialogElement | undefined = $state();
 	let continuousSettingsDialog: HTMLDialogElement | undefined = $state();
@@ -102,11 +102,13 @@
 	let bulkDeletePending = $state(false);
 	let selectionMode = $state(false);
 	let selectedWordIds = new SvelteSet<string>();
+	let starredOnly = $state(false);
 	let pronunciationByWordKey = $state<Record<string, Pronunciation | null>>({});
 	let revealedPronunciation = $state<string | null>(null);
 	let studySettingsDialog: HTMLDialogElement | undefined = $state();
 	let studyActive = $state(false);
 	let studyAll = $state(true);
+	let studyStarredOnly = $state(false);
 	let studyStart = $state(1);
 	let studyEnd = $state(1);
 	let studyMode = $state<ContinuousStudyMode>('card');
@@ -128,26 +130,30 @@
 	];
 
 	let filteredWords = $derived(
-		filterAll
-			? data.vocabulary.words
-			: data.vocabulary.words.filter((word) => {
-					const status = statusFor(word.id);
-					return status !== undefined && selectedStatuses.has(status);
-				})
+		data.vocabulary.words.filter((word) => {
+			if (starredOnly && !word.starred) return false;
+			if (filterAll) return true;
+			const status = statusFor(word.id);
+			return status !== undefined && selectedStatuses.has(status);
+		})
 	);
 	let filterSummary = $derived(
-		filterAll
-			? '전체 단어'
-			: selectedStatuses.size
-				? statusOptions
-						.filter(({ value }) => selectedStatuses.has(value))
-						.map(({ label }) => label.replace(' 단어', ''))
-						.join(' · ')
-				: '결과 선택 없음'
+		[
+			...(starredOnly ? ['별표'] : []),
+			...(filterAll
+				? []
+				: selectedStatuses.size
+					? statusOptions
+							.filter(({ value }) => selectedStatuses.has(value))
+							.map(({ label }) => label.replace(' 단어', ''))
+					: ['결과 선택 없음'])
+		].join(' · ') || '전체 단어'
 	);
 	let studyWords = $derived(
 		data.vocabulary.words.filter(
-			(word) => studyAll || (word.number >= studyStart && word.number <= studyEnd)
+			(word) =>
+				(!studyStarredOnly || word.starred) &&
+				(studyAll || (word.number >= studyStart && word.number <= studyEnd))
 		)
 	);
 	let studyPage = $derived(Math.floor(studyIndex / studyPageSize));
@@ -189,7 +195,8 @@
 
 	function openTestSettings(
 		range?: { start: number; end: number },
-		continuous?: ContinuousLearningProgress
+		continuous?: ContinuousLearningProgress,
+		source: 'range' | 'starred' = 'range'
 	) {
 		if (!data.vocabulary.words.length || !testDialog) return;
 		const first = data.vocabulary.words[0].number;
@@ -197,7 +204,7 @@
 		testStart = range?.start ?? first;
 		testEnd = range?.end ?? last;
 		testAll = !range;
-		testSource = 'range';
+		testSource = source;
 		testStatuses.clear();
 		testContinuousStep = continuous ?? null;
 		testDialog.showModal();
@@ -213,6 +220,7 @@
 		studyStart = data.vocabulary.words[0].number;
 		studyEnd = data.vocabulary.words.at(-1)!.number;
 		studyAll = true;
+		studyStarredOnly = false;
 		studyMode = 'card';
 		studyError = '';
 		studySettingsDialog.showModal();
@@ -236,6 +244,10 @@
 			start > end
 		) {
 			studyError = `범위는 ${first}~${last} 안에서 선택해 주세요.`;
+			return;
+		}
+		if (!studyWords.length) {
+			studyError = '별표한 단어가 없습니다.';
 			return;
 		}
 		studyStart = start;
@@ -272,9 +284,14 @@
 		if (!studyActive || !studyWords.length) return;
 		const range =
 			continuousStep?.range ?? (studyAll ? undefined : { start: studyStart, end: studyEnd });
+		const source = studyStarredOnly ? 'starred' : 'range';
 		studyActive = false;
 		await tick();
-		openTestSettings(range, continuousStep?.status === 'ready' ? continuousStep : undefined);
+		openTestSettings(
+			source === 'starred' ? undefined : range,
+			continuousStep?.status === 'ready' ? continuousStep : undefined,
+			source
+		);
 	}
 
 	function continuousPhaseLabel(phase: 'batch' | 'cumulative') {
@@ -297,6 +314,7 @@
 			return;
 		}
 		studyAll = false;
+		studyStarredOnly = false;
 		studyStart = step.range.start;
 		studyEnd = step.range.end;
 		studyMode = step.settings.studyMode;
@@ -714,9 +732,13 @@
 				<p class="page-description">
 					{continuousStep
 						? `${continuousStep.range?.start}~${continuousStep.range?.end}번 묶음`
-						: studyAll
-							? '전체 단어'
-							: `${studyStart}~${studyEnd}번`} · {studyWords.length}개 · {studyMode === 'card'
+						: studyStarredOnly
+							? studyAll
+								? '별표 단어'
+								: `${studyStart}~${studyEnd}번 별표 단어`
+							: studyAll
+								? '전체 단어'
+								: `${studyStart}~${studyEnd}번`} · {studyWords.length}개 · {studyMode === 'card'
 						? '카드'
 						: '목록'}
 				</p>
@@ -737,7 +759,22 @@
 				{#if studyCurrentWord}
 					{@const pronunciation = pronunciationFor(studyCurrentWord)}
 					<article class="study-card">
-						<span class="study-number">{studyCurrentWord.number}번</span>
+						<div class="study-card-tools">
+							<span class="study-number">{studyCurrentWord.number}번</span>
+							<form method="post" action="?/toggleStar" use:enhance>
+								<input type="hidden" name="wordId" value={studyCurrentWord.id} />
+								<button
+									class="star-button"
+									type="submit"
+									aria-label={studyCurrentWord.starred
+										? `${studyCurrentWord.english} 별표 해제`
+										: `${studyCurrentWord.english} 별표`}
+									aria-pressed={studyCurrentWord.starred}
+								>
+									<span aria-hidden="true">{studyCurrentWord.starred ? '★' : '☆'}</span>
+								</button>
+							</form>
+						</div>
 						<div class="study-word-line">
 							<h2>{studyCurrentWord.english}</h2>
 							{#if pronunciation}<button
@@ -810,6 +847,17 @@
 								>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
 									>{/if}{word.meaning}</span
 							>
+							<form method="post" action="?/toggleStar" use:enhance>
+								<input type="hidden" name="wordId" value={word.id} />
+								<button
+									class="star-button"
+									type="submit"
+									aria-label={word.starred ? `${word.english} 별표 해제` : `${word.english} 별표`}
+									aria-pressed={word.starred}
+								>
+									<span aria-hidden="true">{word.starred ? '★' : '☆'}</span>
+								</button>
+							</form>
 						</div>
 					{/each}
 				</div>
@@ -941,6 +989,14 @@
 					onclick={() => leaveDialog?.showModal()}>{data.vocabulary.title}</button
 				>
 				<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
+				<button
+					class="button button-quiet star-filter"
+					type="button"
+					aria-pressed={starredOnly}
+					onclick={() => (starredOnly = !starredOnly)}
+				>
+					{starredOnly ? '★ 별표 단어' : '☆ 별표만 보기'}
+				</button>
 			</div>
 			<div class="word-toolbar-right">
 				{#if selectionMode}
@@ -1028,7 +1084,7 @@
 		</div>
 
 		{#if data.latestResult}
-			<section class="result-strip" aria-label="최근 테스트 결과">
+			<section class="result-strip" aria-label="단어별 최근 결과">
 				<p class="result-summary">
 					맞음 {data.latestResult.summary.correct} · 테스트 {data.latestResult.summary.tested} · 전체
 					{data.latestResult.summary.total}
@@ -1085,6 +1141,7 @@
 		{/if}
 
 		{#if filteredWords.length}
+			<form id="toggle-star-form" method="post" action="?/toggleStar" use:enhance></form>
 			<form
 				id="bulk-delete-form"
 				method="post"
@@ -1102,6 +1159,7 @@
 										type="checkbox"
 										name="wordIds"
 										value={word.id}
+										form="bulk-delete-form"
 										checked={selectedWordIds.has(word.id)}
 										onchange={(event) => toggleWordSelection(event, word.id)}
 									/>
@@ -1145,6 +1203,17 @@
 									>{/if}{word.meaning}</span
 							>
 							<button
+								class="star-button"
+								form="toggle-star-form"
+								name="wordId"
+								value={word.id}
+								type="submit"
+								aria-label={word.starred ? `${word.english} 별표 해제` : `${word.english} 별표`}
+								aria-pressed={word.starred}
+							>
+								<span aria-hidden="true">{word.starred ? '★' : '☆'}</span>
+							</button>
+							<button
 								class="word-edit"
 								type="button"
 								disabled={selectionMode}
@@ -1158,16 +1227,24 @@
 		{:else}
 			<section class="empty-state" aria-labelledby="words-empty-title">
 				<div class="empty-state-mark" aria-hidden="true">＋</div>
-				<h2 id="words-empty-title">{filterAll ? '아직 단어가 없어요' : '표시할 단어가 없어요'}</h2>
+				<h2 id="words-empty-title">
+					{data.vocabulary.words.length && (starredOnly || !filterAll)
+						? '표시할 단어가 없어요'
+						: '아직 단어가 없어요'}
+				</h2>
 				<p>
-					{filterAll
-						? '단어 사진을 추가하면 단어를 자동으로 읽어 정리합니다.'
-						: selectedStatuses.size
-							? '이 결과에 해당하는 단어가 없습니다.'
-							: '결과를 하나 이상 선택해 주세요.'}
+					{starredOnly
+						? '별표한 단어가 없습니다.'
+						: filterAll
+							? '단어 사진을 추가하면 단어를 자동으로 읽어 정리합니다.'
+							: selectedStatuses.size
+								? '이 결과에 해당하는 단어가 없습니다.'
+								: '결과를 하나 이상 선택해 주세요.'}
 				</p>
-				{#if filterAll}<button class="button button-primary" type="button" onclick={openPhotoPicker}
-						>사진 추가하기</button
+				{#if filterAll && !starredOnly}<button
+						class="button button-primary"
+						type="button"
+						onclick={openPhotoPicker}>사진 추가하기</button
 					>{/if}
 			</section>
 		{/if}
@@ -1349,6 +1426,15 @@
 								disabled={!data.latestResult}
 							/> 최근 결과 선택</label
 						>
+						<label class="choice"
+							><input
+								type="radio"
+								name="source"
+								value="starred"
+								bind:group={testSource}
+								disabled={!data.vocabulary.words.some((word) => word.starred)}
+							/> 별표 단어</label
+						>
 					</div>
 					{#if testSource === 'range'}
 						<label class="choice"
@@ -1380,8 +1466,8 @@
 								/>
 							</div>
 						</div>
-					{:else}
-						<p class="field-note">가장 최근에 완료한 테스트에서 고른 결과의 단어만 출제합니다.</p>
+					{:else if testSource === 'recent-result'}
+						<p class="field-note">완료한 테스트들의 단어별 최신 결과에서 골라 출제합니다.</p>
 						<div class="choice-options">
 							{#each statusOptions as option (option.value)}
 								<label class="choice"
@@ -1396,6 +1482,8 @@
 								>
 							{/each}
 						</div>
+					{:else}
+						<p class="field-note">별표한 단어만 출제합니다.</p>
 					{/if}
 				</fieldset>
 			{/if}
@@ -1538,6 +1626,9 @@
 			<fieldset class="choice-group">
 				<legend>범위</legend>
 				<label class="choice"><input type="checkbox" bind:checked={studyAll} /> 전체 단어</label>
+				<label class="choice"
+					><input type="checkbox" bind:checked={studyStarredOnly} /> 별표한 단어만</label
+				>
 				<div class="choice-options">
 					<div class="field">
 						<label for="study-start">시작 번호</label>

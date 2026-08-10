@@ -12,7 +12,7 @@ import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { actions } from './+page.server';
+import { actions, load } from './+page.server';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -271,6 +271,7 @@ describe('vocabulary word actions', () => {
 				meaning: `뜻-${number}`,
 				sourceImageId: null,
 				uncertain: false,
+				starred: false,
 				createdAt: now,
 				updatedAt: now
 			}));
@@ -324,6 +325,46 @@ describe('vocabulary word actions', () => {
 			'partOfSpeech'
 		);
 	});
+
+	it('validates and persists per-word stars', async () => {
+		const vocabulary = await createVocabulary(userId, '별표', '');
+		const add = new FormData();
+		add.set('english', 'remember');
+		add.set('meaning', '기억하다');
+		await actions.addWord!({
+			request: new Request('http://localhost', { method: 'POST', body: add }),
+			locals: { userId },
+			params: { id: vocabulary.id }
+		} as never);
+		const word = (await getVocabulary(userId, vocabulary.id))!.words[0];
+
+		const invalid = new FormData();
+		invalid.set('wordId', 'not-a-uuid');
+		expect(
+			await actions.toggleStar!({
+				request: new Request('http://localhost', { method: 'POST', body: invalid }),
+				locals: { userId },
+				params: { id: vocabulary.id }
+			} as never)
+		).toMatchObject({ status: 400 });
+
+		const toggle = new FormData();
+		toggle.set('wordId', word.id);
+		expect(
+			await actions.toggleStar!({
+				request: new Request('http://localhost', { method: 'POST', body: toggle }),
+				locals: { userId },
+				params: { id: vocabulary.id }
+			} as never)
+		).toMatchObject({ success: true });
+		expect((await getVocabulary(userId, vocabulary.id))!.words[0].starred).toBe(true);
+		await actions.toggleStar!({
+			request: new Request('http://localhost', { method: 'POST', body: toggle }),
+			locals: { userId },
+			params: { id: vocabulary.id }
+		} as never);
+		expect((await getVocabulary(userId, vocabulary.id))!.words[0].starred).toBe(false);
+	});
 });
 
 describe('test start action', () => {
@@ -337,6 +378,7 @@ describe('test start action', () => {
 			meaning: `뜻-${number}`,
 			sourceImageId: null,
 			uncertain: false,
+			starred: false,
 			createdAt: now,
 			updatedAt: now
 		}));
@@ -415,6 +457,91 @@ describe('test start action', () => {
 		expect(created.items.map(({ wordId }) => wordId)).toEqual([words[1].id, words[3].id]);
 		expect(created.range).toEqual({ start: 2, end: 4 });
 	});
+
+	it('keeps results and recent-result selection across disjoint completed tests', async () => {
+		const vocabulary = await createVocabulary(userId, '분리된 결과', '');
+		const words: Word[] = Array.from({ length: 80 }, (_, index) => ({
+			id: crypto.randomUUID(),
+			number: index + 1,
+			english: `word-${index + 1}`,
+			meaning: `뜻-${index + 1}`,
+			sourceImageId: null,
+			uncertain: false,
+			starred: false,
+			createdAt: '2026-01-01T00:00:00.000Z',
+			updatedAt: '2026-01-01T00:00:00.000Z'
+		}));
+		const first = createTestSession(
+			words.slice(0, 40),
+			{ start: 1, end: 40 },
+			'sequential',
+			'english-to-korean'
+		);
+		first.completedAt = '2026-01-01T00:00:00.000Z';
+		for (const item of first.items) item.result = 'wrong';
+		const second = createTestSession(
+			words.slice(40),
+			{ start: 41, end: 80 },
+			'sequential',
+			'english-to-korean'
+		);
+		second.completedAt = '2026-01-02T00:00:00.000Z';
+		for (const item of second.items) item.result = 'correct';
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words,
+			tests: [first, second]
+		}));
+
+		const page = (await load!({
+			locals: { userId },
+			params: { id: vocabulary.id }
+		} as never))!;
+		expect(page.latestResult).toMatchObject({
+			summary: { correct: 40, tested: 80, total: 80 },
+			results: { [words[0].id]: 'wrong', [words[79].id]: 'correct' }
+		});
+		expect((await getVocabulary(userId, vocabulary.id))?.tests.map(({ id }) => id)).toEqual([
+			first.id,
+			second.id
+		]);
+
+		const form = new FormData();
+		form.set('source', 'recent-result');
+		form.set('statuses', 'wrong');
+		await expect(start(vocabulary.id, form)).rejects.toMatchObject({ status: 303 });
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.tests).toHaveLength(3);
+		expect(saved?.tests.at(-1)?.items.map(({ wordId }) => wordId)).toEqual(
+			words.slice(0, 40).map(({ id }) => id)
+		);
+	});
+
+	it('starts a test with starred words only', async () => {
+		const vocabulary = await createVocabulary(userId, '별표 테스트', '');
+		const now = new Date().toISOString();
+		const words: Word[] = [1, 2, 3].map((number) => ({
+			id: crypto.randomUUID(),
+			number,
+			english: `word-${number}`,
+			meaning: `뜻-${number}`,
+			sourceImageId: null,
+			uncertain: false,
+			starred: number !== 2,
+			createdAt: now,
+			updatedAt: now
+		}));
+		await updateVocabulary(userId, vocabulary.id, (current) => ({ ...current, words }));
+
+		const form = new FormData();
+		form.set('source', 'starred');
+		await expect(start(vocabulary.id, form)).rejects.toMatchObject({ status: 303 });
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.tests.at(-1)?.items.map(({ wordId }) => wordId)).toEqual([
+			words[0].id,
+			words[2].id
+		]);
+	});
 });
 
 describe('continuous learning actions', () => {
@@ -428,6 +555,7 @@ describe('continuous learning actions', () => {
 			meaning: `뜻-${number}`,
 			sourceImageId: null,
 			uncertain: false,
+			starred: false,
 			createdAt: now,
 			updatedAt: now
 		}));

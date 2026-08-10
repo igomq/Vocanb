@@ -5,6 +5,7 @@ import {
 	OcrResponseSchema,
 	WordSchema,
 	createTestSession,
+	latestCompletedResults,
 	nextContinuousLearningStep,
 	normalizeOcrEntry,
 	parseContinuousLearningSettings,
@@ -23,6 +24,7 @@ const words: Word[] = [1, 2, 3].map((number) => ({
 	meaning: `뜻-${number}`,
 	sourceImageId: '10000000-0000-4000-8000-000000000001',
 	uncertain: false,
+	starred: false,
 	createdAt: '2026-01-01T00:00:00.000Z',
 	updatedAt: '2026-01-01T00:00:00.000Z'
 }));
@@ -206,6 +208,36 @@ describe('results and OCR schema', () => {
 		expect(WordSchema.parse({ ...words[0], sourceImageId: null })).toHaveProperty(
 			'sourceImageId',
 			null
+		);
+	});
+
+	it('defaults legacy words to unstarred and keeps the newest completed result per word', () => {
+		const legacyWord = { ...words[0] };
+		Reflect.deleteProperty(legacyWord, 'starred');
+		expect(WordSchema.parse(legacyWord).starred).toBe(false);
+
+		const first = createTestSession(
+			[words[0]],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean'
+		);
+		first.completedAt = '2026-01-01T00:00:00.000Z';
+		first.items[0].result = 'wrong';
+		const second = createTestSession(
+			[words[1]],
+			{ start: 2, end: 2 },
+			'sequential',
+			'english-to-korean'
+		);
+		second.completedAt = '2026-01-02T00:00:00.000Z';
+		second.items[0].result = 'correct';
+
+		expect(latestCompletedResults({ tests: [first, second] })).toEqual(
+			new Map([
+				[words[1].id, 'correct'],
+				[words[0].id, 'wrong']
+			])
 		);
 	});
 

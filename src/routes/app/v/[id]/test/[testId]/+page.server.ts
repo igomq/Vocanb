@@ -2,7 +2,8 @@ import {
 	createTestSession,
 	nextContinuousLearningStep,
 	ResultStatusSchema,
-	summarizeTest
+	summarizeTest,
+	toggleWordStar
 } from '$lib/domain';
 import { getVocabulary, updateVocabulary } from '$lib/server/storage';
 import { fail, redirect } from '@sveltejs/kit';
@@ -16,6 +17,12 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		title: vocabulary.title,
 		rangeLabel: vocabulary.rangeLabel,
 		test,
+		stars: Object.fromEntries(
+			test.items.map((item) => [
+				item.wordId,
+				vocabulary.words.find((word) => word.id === item.wordId)?.starred ?? false
+			])
+		),
 		summary: summarizeTest(test, vocabulary.words.length)
 	};
 };
@@ -43,6 +50,20 @@ export const actions: Actions = {
 				error instanceof Error ? error.message : 'unknown error'
 			);
 			return fail(400, { message: '평가를 저장하지 못했습니다.' });
+		}
+	},
+	toggleStar: async ({ request, locals, params }) => {
+		const wordId = String((await request.formData()).get('wordId') || '');
+		try {
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) =>
+				toggleWordStar(vocabulary, wordId)
+			);
+			return { success: true, action: 'toggleStar' };
+		} catch (error) {
+			return fail(400, {
+				action: 'toggleStar',
+				message: error instanceof Error ? error.message : '별표를 저장하지 못했습니다.'
+			});
 		}
 	},
 	complete: async ({ locals, params }) => {
