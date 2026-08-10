@@ -22,7 +22,9 @@
 	let uploadSettingsDialog: HTMLDialogElement | undefined = $state();
 	let uploadDialog: HTMLDialogElement | undefined = $state();
 	let photoInput: HTMLInputElement | undefined = $state();
-	let uploadTargetInput: HTMLInputElement | undefined = $state();
+	let uploadFiles = $state<File[]>([]);
+	let uploadMode = $state<'all' | 'targets'>('all');
+	let uploadTargets = $state<(number | undefined)[]>([]);
 	let editingWord = $state<Word | null>(null);
 	let editEnglish = $state('');
 	let editMeaning = $state('');
@@ -285,15 +287,24 @@
 
 	function openUploadSettings() {
 		if (!photoInput?.files?.length) return;
-		uploadFileCount = photoInput.files.length;
-		if (uploadTargetInput) uploadTargetInput.value = '';
+		uploadFiles = Array.from(photoInput.files);
+		uploadFileCount = uploadFiles.length;
+		uploadMode = 'all';
+		uploadTargets = uploadFiles.map(() => 1);
 		uploadSettingsDialog?.showModal();
+	}
+
+	function resetUploadSelection() {
+		if (photoInput) photoInput.value = '';
+		uploadFiles = [];
+		uploadMode = 'all';
+		uploadTargets = [];
+		uploadFileCount = 0;
 	}
 
 	function closeUploadSettings() {
 		if (uploadSettingsDialog?.open) uploadSettingsDialog.close();
-		if (photoInput) photoInput.value = '';
-		if (uploadTargetInput) uploadTargetInput.value = '';
+		resetUploadSelection();
 	}
 
 	function toggleFilterAll(event: Event) {
@@ -318,8 +329,7 @@
 		if (uploadPending) return;
 		if (uploadDialog?.open) uploadDialog.close();
 		uploadError = '';
-		if (photoInput) photoInput.value = '';
-		if (uploadTargetInput) uploadTargetInput.value = '';
+		resetUploadSelection();
 	}
 
 	beforeNavigate(({ cancel, willUnload }) => {
@@ -338,8 +348,7 @@
 			cleaned = true;
 			uploadPending = false;
 			if (close && uploadDialog?.open) uploadDialog.close();
-			if (close && photoInput) photoInput.value = '';
-			if (close && uploadTargetInput) uploadTargetInput.value = '';
+			if (close) resetUploadSelection();
 		};
 		controller.signal.addEventListener(
 			'abort',
@@ -889,24 +898,42 @@
 		</div>
 
 		<div class="form-stack">
-			<div class="field">
-				<label for="upload-target">추출할 단어 수 (선택)</label>
-				<input
-					bind:this={uploadTargetInput}
-					id="upload-target"
-					name="targetWordCount"
-					form="photo-upload-form"
-					type="number"
-					min="1"
-					max={uploadFileCount * 500}
-					step="1"
-					inputmode="numeric"
-					placeholder="전체 추출"
-				/>
-				<p class="field-note">
-					비워 두면 사진에 보이는 단어를 모두 추출합니다. 최대 {uploadFileCount * 500}개
-				</p>
-			</div>
+			<fieldset class="choice-group">
+				<legend>추출 방식</legend>
+				<label class="choice"
+					><input type="radio" bind:group={uploadMode} value="all" /> 사진에 보이는 주요 단어 전체 추출</label
+				>
+				<label class="choice"
+					><input type="radio" bind:group={uploadMode} value="targets" /> 사진별 목표 개수 지정</label
+				>
+			</fieldset>
+			{#if uploadMode === 'targets'}
+				<div class="form-stack">
+					{#each uploadFiles as file, index (file)}
+						<div class="field">
+							<label for={`upload-target-${index}`}>사진 {index + 1} 목표 개수 ({file.name})</label>
+							<input
+								id={`upload-target-${index}`}
+								name="targetWordCounts"
+								form="photo-upload-form"
+								type="number"
+								min="1"
+								max="500"
+								step="1"
+								inputmode="numeric"
+								required
+								bind:value={uploadTargets[index]}
+							/>
+						</div>
+					{/each}
+					<p class="field-note" aria-live="polite">
+						총 목표 개수: {uploadTargets.reduce(
+							(total, target) => (total ?? 0) + (target ?? 0),
+							0
+						)}개
+					</p>
+				</div>
+			{/if}
 			<div class="modal-actions">
 				<button class="button button-secondary" type="button" onclick={closeUploadSettings}
 					>취소</button

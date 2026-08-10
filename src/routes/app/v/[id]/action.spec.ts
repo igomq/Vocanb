@@ -47,10 +47,10 @@ function response(entries: { sourceOrder: number; english: string; meaning: stri
 	return { entries: entries.map((entry) => ({ ...entry, uncertain: false })) };
 }
 
-async function upload(vocabularyId: string, files: File[], targetWordCount?: string) {
+async function upload(vocabularyId: string, files: File[], targetWordCounts?: (number | string)[]) {
 	const form = new FormData();
 	for (const file of files) form.append('images', file);
-	if (targetWordCount !== undefined) form.set('targetWordCount', targetWordCount);
+	for (const target of targetWordCounts ?? []) form.append('targetWordCounts', String(target));
 	return actions.upload!({
 		request: new Request('http://localhost', { method: 'POST', body: form }),
 		locals: { userId },
@@ -67,60 +67,91 @@ async function context(vocabularyId: string, form: FormData) {
 }
 
 describe('vocabulary upload action', () => {
-	it('allows an empty target and the exact per-image maximum', async () => {
+	it('passes per-image targets to OCR in image order', async () => {
 		const vocabulary = await createVocabulary(userId, '업로드', '');
 		const extract = vi
 			.spyOn(ocrProvider, 'extract')
-			.mockResolvedValue(response([{ sourceOrder: 1, english: 'apple', meaning: '사과' }]));
+			.mockResolvedValue(response([{ sourceOrder: 1, english: 'word', meaning: '뜻' }]));
 
-		expect(await upload(vocabulary.id, [await imageFile()])).toMatchObject({ success: true });
-		expect(await upload(vocabulary.id, [await imageFile()], '500')).toMatchObject({
+		expect(
+			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')], [3, 5])
+		).toMatchObject({
 			success: true
 		});
-		expect(extract).toHaveBeenCalledWith(expect.any(Buffer), 500);
+		expect(extract.mock.calls.map(([, target]) => target)).toEqual([3, 5]);
 	});
 
-	it.each(['1.5', '0', '-1', '1001'])('rejects invalid target %s', async (target) => {
-		const vocabulary = await createVocabulary(userId, '검증', '');
-		const result = await upload(vocabulary.id, [await imageFile()], target);
-		expect(result).toMatchObject({ status: 400 });
-	});
-
-	it('caps every OCR request at 500', async () => {
-		const vocabulary = await createVocabulary(userId, '여러 사진', '');
+	it('passes undefined targets in default mode', async () => {
+		const vocabulary = await createVocabulary(userId, '기본 추출', '');
 		const calls: (number | undefined)[] = [];
 		vi.spyOn(ocrProvider, 'extract').mockImplementation(async (_bytes, target) => {
 			calls.push(target);
-			return response([{ sourceOrder: 1, english: `word-${calls.length}`, meaning: '뜻' }]);
+			return response([{ sourceOrder: 1, english: 'word', meaning: '뜻' }]);
 		});
 
 		expect(
-			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')], '800')
-		).toMatchObject({ success: true });
-		expect(calls).toEqual([500, 500]);
+			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')])
+		).toMatchObject({
+			success: true
+		});
+		expect(calls).toEqual([undefined, undefined]);
 	});
 
-	it('keeps an imbalanced batch globally capped and in image order', async () => {
-		const vocabulary = await createVocabulary(userId, '순서', '');
-		const calls: (number | undefined)[] = [];
-		vi.spyOn(ocrProvider, 'extract').mockImplementation(async () => {
-			calls.push(3);
-			return calls.length === 1
-				? response([{ sourceOrder: 1, english: 'first', meaning: '첫째' }])
+	it('stores every targeted OCR entry without global truncation', async () => {
+		const vocabulary = await createVocabulary(userId, '사진별 개수', '');
+		vi.spyOn(ocrProvider, 'extract').mockImplementation(async (_bytes, target) =>
+			response(
+				Array.from({ length: target === 3 ? 3 : 5 }, (_, index) => ({
+					sourceOrder: index + 1,
+					english: `${target}-${index + 1}`,
+					meaning: '뜻'
+				}))
+			)
+		);
+
+		expect(
+			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')], [3, 5])
+		).toMatchObject({
+			success: true
+		});
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.words).toHaveLength(8);
+		expect(saved?.images.map(({ wordCount }) => wordCount)).toEqual([3, 5]);
+	});
+
+	it('keeps image and word order when OCR completes out of order', async () => {
+		const vocabulary = await createVocabulary(userId, '비동기 순서', '');
+		vi.spyOn(ocrProvider, 'extract').mockImplementation(async (_bytes, target) => {
+			await new Promise((resolve) => setTimeout(resolve, target === 3 ? 20 : 0));
+			return target === 3
+				? response([{ sourceOrder: 1, english: 'first-image', meaning: '뜻' }])
 				: response([
-						{ sourceOrder: 2, english: 'second-2', meaning: '둘째' },
-						{ sourceOrder: 1, english: 'second-1', meaning: '둘째 하나' },
-						{ sourceOrder: 3, english: 'second-3', meaning: '셋째' }
+						{ sourceOrder: 2, english: 'second-2', meaning: '뜻' },
+						{ sourceOrder: 1, english: 'second-1', meaning: '뜻' }
 					]);
 		});
 
 		expect(
-			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')], '3')
-		).toMatchObject({ success: true });
-		expect(calls).toEqual([3, 3]);
+			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')], [3, 5])
+		).toMatchObject({
+			success: true
+		});
 		expect(
 			(await getVocabulary(userId, vocabulary.id))?.words.map(({ english }) => english)
-		).toEqual(['first', 'second-1', 'second-2']);
+		).toEqual(['first-image', 'second-1', 'second-2']);
+	});
+
+	it.each(['0', '-1', '1.5', '501'])('rejects invalid per-image target %s', async (target) => {
+		const vocabulary = await createVocabulary(userId, '검증', '');
+		const result = await upload(vocabulary.id, [await imageFile()], [target]);
+		expect(result).toMatchObject({ status: 400 });
+	});
+
+	it('rejects a target/image count mismatch', async () => {
+		const vocabulary = await createVocabulary(userId, '개수 검증', '');
+		const files = [await imageFile('one.png'), await imageFile('two.png')];
+		expect(await upload(vocabulary.id, files, [3])).toMatchObject({ status: 400 });
+		expect(await upload(vocabulary.id, files, [3, 5, 7])).toMatchObject({ status: 400 });
 	});
 
 	it('stores nothing when OCR fails or produces no storable entries', async () => {
