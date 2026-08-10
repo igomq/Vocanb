@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { createTestSession, type Word } from '$lib/domain';
 import {
 	createVocabulary,
 	getVocabulary,
@@ -322,5 +323,56 @@ describe('vocabulary word actions', () => {
 		expect((await getVocabulary(userId, vocabulary.id))!.words[0]).not.toHaveProperty(
 			'partOfSpeech'
 		);
+	});
+});
+
+describe('continuous learning actions', () => {
+	it('clears only continuous metadata while preserving test history', async () => {
+		const vocabulary = await createVocabulary(userId, '연속 취소', '');
+		const now = new Date().toISOString();
+		const words: Word[] = [1, 2].map((number) => ({
+			id: crypto.randomUUID(),
+			number,
+			english: `word-${number}`,
+			meaning: `뜻-${number}`,
+			sourceImageId: null,
+			uncertain: false,
+			createdAt: now,
+			updatedAt: now
+		}));
+		const normal = createTestSession(
+			words,
+			{ start: 1, end: 2 },
+			'sequential',
+			'english-to-korean'
+		);
+		normal.items[0].result = 'wrong';
+		const continuous = createTestSession(
+			[words[0]],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean',
+			Math.random,
+			{ phase: 'batch', batchSize: 1, daySize: 2, dayStart: 1, dayEnd: 2, studyMode: 'card' }
+		);
+		continuous.items[0].result = 'correct';
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words,
+			tests: [normal, continuous]
+		}));
+
+		expect(
+			await actions.cancelContinuous!({
+				request: new Request('http://localhost', { method: 'POST' }),
+				locals: { userId },
+				params: { id: vocabulary.id }
+			} as never)
+		).toMatchObject({ success: true });
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.tests).toHaveLength(2);
+		expect(saved?.tests[0].items[0].result).toBe('wrong');
+		expect(saved?.tests[1].items[0].result).toBe('correct');
+		expect(saved?.tests.every((test) => !test.continuous)).toBe(true);
 	});
 });

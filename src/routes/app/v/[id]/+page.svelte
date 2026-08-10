@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { beforeNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
 		CONTINUOUS_BATCH_SIZE_DEFAULT,
@@ -14,6 +15,7 @@
 		parseContinuousLearningSettings,
 		type Pronunciation,
 		type ContinuousLearningProgress,
+		type ContinuousStudyMode,
 		type ResultStatus,
 		type Word
 	} from '$lib/domain';
@@ -105,11 +107,12 @@
 	let studyAll = $state(true);
 	let studyStart = $state(1);
 	let studyEnd = $state(1);
-	let studyMode = $state<'card' | 'list'>('card');
+	let studyMode = $state<ContinuousStudyMode>('card');
 	let studyIndex = $state(0);
 	let studyError = $state('');
 	let continuousBatchSize = $state(CONTINUOUS_BATCH_SIZE_DEFAULT);
 	let continuousDaySize = $state(CONTINUOUS_DAY_SIZE_DEFAULT);
+	let continuousStudyMode = $state<ContinuousStudyMode>('card');
 	let continuousError = $state('');
 	let continuousStep = $state<ContinuousLearningProgress | null>(null);
 	let testContinuousStep = $state<ContinuousLearningProgress | null>(null);
@@ -292,7 +295,7 @@
 		studyAll = false;
 		studyStart = step.range.start;
 		studyEnd = step.range.end;
-		studyMode = 'card';
+		studyMode = step.settings.studyMode;
 		studyIndex = 0;
 		studyError = '';
 		closePronunciation();
@@ -312,6 +315,7 @@
 		if (data.continuous?.status === 'in-progress') return;
 		continuousBatchSize = CONTINUOUS_BATCH_SIZE_DEFAULT;
 		continuousDaySize = CONTINUOUS_DAY_SIZE_DEFAULT;
+		continuousStudyMode = 'card';
 		continuousError = '';
 		continuousSettingsDialog?.showModal();
 	}
@@ -319,7 +323,11 @@
 	function startContinuous(event: SubmitEvent) {
 		event.preventDefault();
 		try {
-			const settings = parseContinuousLearningSettings(continuousBatchSize, continuousDaySize);
+			const settings = parseContinuousLearningSettings(
+				continuousBatchSize,
+				continuousDaySize,
+				continuousStudyMode
+			);
 			const first = data.vocabulary.words[0]?.number;
 			const last = data.vocabulary.words.at(-1)?.number;
 			if (first === undefined || last === undefined) throw new Error('테스트할 단어가 없습니다.');
@@ -658,11 +666,26 @@
 		if (!window.confirm('이 단어를 삭제할까요?')) event.preventDefault();
 	}
 
+	function confirmCancelContinuous(event: SubmitEvent) {
+		if (!window.confirm('연속 학습을 취소할까요? 진행 상황만 초기화되고 테스트 기록은 보존됩니다.'))
+			event.preventDefault();
+	}
+
 	function imageError(event: Event) {
 		const image = event.currentTarget as HTMLImageElement;
 		image.hidden = true;
 		(image.nextElementSibling as HTMLElement | null)?.removeAttribute('hidden');
 	}
+
+	let autoStartedContinuous = '';
+	$effect(() => {
+		const step = data.continuous;
+		if (page.url.searchParams.get('continuous') !== '1' || step?.status !== 'ready') return;
+		const key = `${step.phase}:${step.range?.start}-${step.range?.end}:${step.settings.studyMode}`;
+		if (autoStartedContinuous === key) return;
+		autoStartedContinuous = key;
+		beginContinuousStep(step);
+	});
 </script>
 
 <svelte:window onbeforeunload={warnBeforeUnload} />
@@ -806,6 +829,13 @@
 					type="button"
 					onclick={testStudyRange}>이 범위 테스트하기</button
 				>{/if}
+			{#if continuousStep}<form
+					method="post"
+					action="?/cancelContinuous"
+					onsubmit={confirmCancelContinuous}
+				>
+					<button class="button button-danger" type="submit">연속 학습 취소</button>
+				</form>{/if}
 			<button class="button button-quiet" type="button" onclick={exitStudy}>돌아가기</button>
 		</footer>
 	{:else}
@@ -872,19 +902,24 @@
 						{data.continuous.completedDays}일 완료
 					</p>
 				</div>
-				{#if data.continuous.status === 'in-progress' && data.continuous.testId}
-					<a
-						class="button button-secondary"
-						href={resolve('/app/v/[id]/test/[testId]', {
-							id: data.vocabulary.id,
-							testId: data.continuous.testId
-						})}>테스트 이어서</a
-					>
-				{:else}
-					<button class="button button-primary" type="button" onclick={resumeContinuous}
-						>계속하기</button
-					>
-				{/if}
+				<div class="button-row continuous-actions">
+					{#if data.continuous.status === 'in-progress' && data.continuous.testId}
+						<a
+							class="button button-secondary"
+							href={resolve('/app/v/[id]/test/[testId]', {
+								id: data.vocabulary.id,
+								testId: data.continuous.testId
+							})}>테스트 이어서</a
+						>
+					{:else}
+						<button class="button button-primary" type="button" onclick={resumeContinuous}
+							>계속하기</button
+						>
+					{/if}
+					<form method="post" action="?/cancelContinuous" onsubmit={confirmCancelContinuous}>
+						<button class="button button-danger" type="submit">연속 학습 취소</button>
+					</form>
+				</div>
 			</section>
 		{/if}
 
@@ -962,22 +997,14 @@
 							disabled={!data.vocabulary.words.length}
 							onclick={() => openTestSettings()}>테스트</button
 						>
-						{#if data.continuous?.status === 'in-progress' && data.continuous.testId}
-							<a
-								class="button button-secondary"
-								href={resolve('/app/v/[id]/test/[testId]', {
-									id: data.vocabulary.id,
-									testId: data.continuous.testId
-								})}>테스트 이어서</a
-							>
-						{:else if data.continuous?.status !== 'complete'}
+						{#if !data.continuous}
 							<button
 								class="button button-secondary"
 								type="button"
 								disabled={!data.vocabulary.words.length}
 								onclick={openContinuousSettings}
 							>
-								{data.continuous?.status === 'ready' ? '연속 학습 계속' : '연속 학습'}
+								연속 학습
 							</button>
 						{/if}
 						<button
@@ -1286,6 +1313,11 @@
 						name="continuousDaySize"
 						value={testContinuousStep.settings.daySize}
 					/>
+					<input
+						type="hidden"
+						name="continuousStudyMode"
+						value={testContinuousStep.settings.studyMode}
+					/>
 					<p class="field-note">
 						{testContinuousStep.phase === 'cumulative'
 							? '오늘 외운 단어를 한 번에 다시 확인합니다.'
@@ -1418,6 +1450,17 @@
 					/>
 				</div>
 			</div>
+			<fieldset class="choice-group">
+				<legend>암기 방식</legend>
+				<div class="choice-options">
+					<label class="choice"
+						><input type="radio" bind:group={continuousStudyMode} value="card" /> 카드</label
+					>
+					<label class="choice"
+						><input type="radio" bind:group={continuousStudyMode} value="list" /> 목록 (최대 5개)</label
+					>
+				</div>
+			</fieldset>
 			<p class="field-note">
 				기본값은 한 묶음 10개, 하루 누적 40개입니다. 묶음 수는 하루 누적 수보다 클 수 없어요.
 			</p>

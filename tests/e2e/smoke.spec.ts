@@ -113,30 +113,50 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 	const continuousDialog = page.locator('dialog[aria-labelledby="continuous-settings-title"]');
 	await continuousDialog.getByLabel('한 묶음 단어 수').fill('1');
 	await continuousDialog.getByLabel('하루 누적 단어 수').fill('2');
+	await continuousDialog.getByLabel('목록 (최대 5개)').check();
+	await continuousDialog.getByRole('button', { name: '연속 학습 시작' }).click();
+	await expect(page.locator('.study-word-list')).toBeVisible();
+	page.once('dialog', (dialog) => dialog.accept());
+	await page.getByRole('button', { name: '연속 학습 취소' }).click();
+	await page.waitForLoadState('networkidle');
+	await expect(page.getByRole('button', { name: '연속 학습', exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '연속 학습', exact: true }).click();
+	await continuousDialog.getByLabel('한 묶음 단어 수').fill('1');
+	await continuousDialog.getByLabel('하루 누적 단어 수').fill('2');
+	await continuousDialog.getByLabel('목록 (최대 5개)').check();
 	await continuousDialog.getByRole('button', { name: '연속 학습 시작' }).click();
 
-	for (const [phase, itemCount] of [1, 1, 2].entries()) {
-		if (itemCount === 1) {
-			await expect(page.getByRole('heading', { name: '이번 묶음 암기' })).toBeVisible();
-			await page.getByRole('button', { name: '이 범위 테스트하기' }).click();
-		}
-		await testDialog.getByRole('button', { name: '테스트 시작' }).click();
-		await expect(page).toHaveURL(/\/test\/[0-9a-f-]{36}$/);
-		const rows = page.locator('.test-row');
-		await expect(rows).toHaveCount(itemCount);
-		for (let index = 0; index < itemCount; index += 1) {
-			await rows.nth(index).getByRole('button', { name: '정답 보기' }).click();
-			await rows.nth(index).getByRole('button', { name: '맞음', exact: true }).click();
-		}
-		await page.getByRole('button', { name: '테스트 완료' }).click();
-		await expect(page).toHaveURL(new RegExp(`/app/v/${vocabularyId}\\?completed=1$`));
-		if (phase < 2) {
-			await page
-				.getByRole('region', { name: '연속 학습 진행 상황' })
-				.getByRole('button', { name: '계속하기' })
-				.click();
-		}
+	await expect(page.getByRole('heading', { name: '이번 묶음 암기' })).toBeVisible();
+	await expect(page.locator('.study-word-list')).toBeVisible();
+	await page.getByRole('button', { name: '이 범위 테스트하기' }).click();
+	await testDialog.getByRole('button', { name: '테스트 시작' }).click();
+	await expect(page).toHaveURL(/\/test\/[0-9a-f-]{36}$/);
+	let rows = page.locator('.test-row');
+	await expect(rows).toHaveCount(1);
+	await rows.nth(0).getByRole('button', { name: '정답 보기' }).click();
+	await rows.nth(0).getByRole('button', { name: '맞음', exact: true }).click();
+	await page.getByRole('button', { name: '테스트 완료' }).click();
+	await expect(page).toHaveURL(new RegExp(`/app/v/${vocabularyId}\\?continuous=1$`));
+
+	await expect(page.locator('.study-word-list')).toBeVisible();
+	await page.getByRole('button', { name: '이 범위 테스트하기' }).click();
+	await testDialog.getByRole('button', { name: '테스트 시작' }).click();
+	await expect(page).toHaveURL(/\/test\/[0-9a-f-]{36}$/);
+	rows = page.locator('.test-row');
+	await expect(rows).toHaveCount(1);
+	await rows.nth(0).getByRole('button', { name: '정답 보기' }).click();
+	await rows.nth(0).getByRole('button', { name: '맞음', exact: true }).click();
+	await page.getByRole('button', { name: '테스트 완료' }).click();
+	await expect(page).toHaveURL(/\/test\/[0-9a-f-]{36}$/);
+
+	rows = page.locator('.test-row');
+	await expect(rows).toHaveCount(2);
+	for (let index = 0; index < 2; index += 1) {
+		await rows.nth(index).getByRole('button', { name: '정답 보기' }).click();
+		await rows.nth(index).getByRole('button', { name: '맞음', exact: true }).click();
 	}
+	await page.getByRole('button', { name: '테스트 완료' }).click();
+	await expect(page).toHaveURL(new RegExp(`/app/v/${vocabularyId}\\?completed=1$`));
 	await expect(page.getByRole('region', { name: '연속 학습 완료' })).toBeVisible();
 
 	await page.locator('summary.filter-summary').click();

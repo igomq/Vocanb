@@ -11,10 +11,17 @@
 	let pendingWordId = $state<string | null>(null);
 	let completePending = $state(false);
 	let leaveDialog: HTMLDialogElement | undefined = $state();
+	let activeTestId = '';
 
 	let evaluated = $derived(data.test.items.filter((item) => item.result).length);
 	let completeReady = $derived(evaluated === data.test.items.length);
 	let completed = $derived(Boolean(data.test.completedAt));
+
+	$effect(() => {
+		if (activeTestId === data.test.id) return;
+		activeTestId = data.test.id;
+		revealed.clear();
+	});
 
 	const statuses: { value: ResultStatus; label: string }[] = [
 		{ value: 'correct', label: '맞음' },

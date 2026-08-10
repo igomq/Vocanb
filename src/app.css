@@ -636,6 +636,10 @@ h2 {
 	gap: 8px;
 }
 
+.word-toolbar-primary-actions {
+	flex: 0 1 auto;
+}
+
 .word-toolbar-group form,
 .word-toolbar-group > .button {
 	display: flex;
@@ -916,6 +920,10 @@ h2 {
 	font-size: 15px;
 	font-weight: 650;
 	font-variant-numeric: tabular-nums;
+}
+
+.continuous-actions form {
+	display: flex;
 }
 
 .filter-menu {

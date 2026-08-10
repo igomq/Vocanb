@@ -1,4 +1,9 @@
-import { ResultStatusSchema, summarizeTest } from '$lib/domain';
+import {
+	createTestSession,
+	nextContinuousLearningStep,
+	ResultStatusSchema,
+	summarizeTest
+} from '$lib/domain';
 import { getVocabulary, updateVocabulary } from '$lib/server/storage';
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
@@ -41,6 +46,7 @@ export const actions: Actions = {
 		}
 	},
 	complete: async ({ locals, params }) => {
+		let destination = `/app/v/${params.id}?completed=1`;
 		try {
 			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
 				const test = vocabulary.tests.find(
@@ -49,6 +55,36 @@ export const actions: Actions = {
 				if (!test) throw new Error('테스트를 찾을 수 없습니다.');
 				if (test.items.some((item) => !item.result)) throw new Error('모든 단어를 평가해 주세요.');
 				test.completedAt = new Date().toISOString();
+				if (test.continuous) {
+					const next = nextContinuousLearningStep(vocabulary);
+					if (next?.status === 'ready' && next.phase && next.range && next.dayRange) {
+						if (next.phase === 'cumulative') {
+							const words = vocabulary.words.filter(
+								(word) => word.number >= next.range!.start && word.number <= next.range!.end
+							);
+							if (!words.length) throw new Error('테스트할 단어가 없습니다.');
+							const cumulative = createTestSession(
+								words,
+								next.range,
+								test.order,
+								test.direction,
+								Math.random,
+								{
+									phase: next.phase,
+									batchSize: next.settings.batchSize,
+									daySize: next.settings.daySize,
+									dayStart: next.dayRange.start,
+									dayEnd: next.dayRange.end,
+									studyMode: next.settings.studyMode
+								}
+							);
+							vocabulary.tests.push(cumulative);
+							destination = `/app/v/${params.id}/test/${cumulative.id}`;
+						} else {
+							destination = `/app/v/${params.id}?continuous=1`;
+						}
+					}
+				}
 				return vocabulary;
 			});
 		} catch (error) {
@@ -56,6 +92,6 @@ export const actions: Actions = {
 				message: error instanceof Error ? error.message : '테스트를 완료하지 못했습니다.'
 			});
 		}
-		redirect(303, `/app/v/${params.id}?completed=1`);
+		redirect(303, destination);
 	}
 };

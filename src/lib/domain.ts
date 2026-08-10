@@ -10,11 +10,14 @@ export const CONTINUOUS_BATCH_SIZE_MIN = 1;
 export const CONTINUOUS_BATCH_SIZE_MAX = 500;
 export const CONTINUOUS_DAY_SIZE_MIN = 1;
 export const CONTINUOUS_DAY_SIZE_MAX = 5000;
+export const continuousStudyModes = ['card', 'list'] as const;
+export type ContinuousStudyMode = (typeof continuousStudyModes)[number];
 
 export const ContinuousLearningSettingsSchema = z
 	.object({
 		batchSize: z.number().int().min(CONTINUOUS_BATCH_SIZE_MIN).max(CONTINUOUS_BATCH_SIZE_MAX),
-		daySize: z.number().int().min(CONTINUOUS_DAY_SIZE_MIN).max(CONTINUOUS_DAY_SIZE_MAX)
+		daySize: z.number().int().min(CONTINUOUS_DAY_SIZE_MIN).max(CONTINUOUS_DAY_SIZE_MAX),
+		studyMode: z.enum(continuousStudyModes).default('card')
 	})
 	.strict()
 	.refine(({ batchSize, daySize }) => batchSize <= daySize, {
@@ -24,7 +27,11 @@ export type ContinuousLearningSettings = z.infer<typeof ContinuousLearningSettin
 
 const continuousSettingError = `묶음 개수는 ${CONTINUOUS_BATCH_SIZE_MIN}~${CONTINUOUS_BATCH_SIZE_MAX}, 하루 누적 개수는 ${CONTINUOUS_DAY_SIZE_MIN}~${CONTINUOUS_DAY_SIZE_MAX} 사이의 정수로 입력해 주세요. 묶음 개수는 하루 누적 개수보다 클 수 없습니다.`;
 
-export function parseContinuousLearningSettings(batchValue: unknown, dayValue: unknown) {
+export function parseContinuousLearningSettings(
+	batchValue: unknown,
+	dayValue: unknown,
+	studyModeValue: unknown = 'card'
+) {
 	const numberValue = (value: unknown) =>
 		typeof value === 'number'
 			? value
@@ -33,7 +40,8 @@ export function parseContinuousLearningSettings(batchValue: unknown, dayValue: u
 				: Number.NaN;
 	const parsed = ContinuousLearningSettingsSchema.safeParse({
 		batchSize: numberValue(batchValue),
-		daySize: numberValue(dayValue)
+		daySize: numberValue(dayValue),
+		studyMode: studyModeValue
 	});
 	if (!parsed.success) throw new Error(continuousSettingError);
 	return parsed.data;
@@ -46,7 +54,8 @@ export const ContinuousTestMetadataSchema = z
 		batchSize: z.number().int().positive(),
 		daySize: z.number().int().positive(),
 		dayStart: z.number().int().positive(),
-		dayEnd: z.number().int().positive()
+		dayEnd: z.number().int().positive(),
+		studyMode: z.enum(continuousStudyModes).default('card')
 	})
 	.strict()
 	.refine(({ batchSize, daySize }) => batchSize <= daySize, {
@@ -318,7 +327,11 @@ export function nextContinuousLearningStep(
 	}
 
 	const metadata = latest.continuous!;
-	const currentSettings = { batchSize: metadata.batchSize, daySize: metadata.daySize };
+	const currentSettings = {
+		batchSize: metadata.batchSize,
+		daySize: metadata.daySize,
+		studyMode: metadata.studyMode
+	};
 	const dayRange = { start: metadata.dayStart, end: metadata.dayEnd };
 	if (!latest.completedAt) {
 		return {

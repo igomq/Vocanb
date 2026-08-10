@@ -331,7 +331,8 @@ export const actions: Actions = {
 			if (data.get('continuous') === 'on') {
 				const settings = parseContinuousLearningSettings(
 					data.get('continuousBatchSize'),
-					data.get('continuousDaySize')
+					data.get('continuousDaySize'),
+					data.get('continuousStudyMode')
 				);
 				const step = nextContinuousLearningStep(vocabulary, settings);
 				const range = step?.range;
@@ -347,7 +348,8 @@ export const actions: Actions = {
 					batchSize: step.settings.batchSize,
 					daySize: step.settings.daySize,
 					dayStart: dayRange.start,
-					dayEnd: dayRange.end
+					dayEnd: dayRange.end,
+					studyMode: step.settings.studyMode
 				});
 			} else {
 				const range = parseTestRange(
@@ -369,5 +371,27 @@ export const actions: Actions = {
 			});
 		}
 		redirect(303, `/app/v/${params.id}/test/${created.id}`);
+	},
+	cancelContinuous: async ({ locals, params }) => {
+		try {
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) => ({
+				...vocabulary,
+				tests: vocabulary.tests.map((test) => {
+					const history = { ...test };
+					delete history.continuous;
+					return history;
+				})
+			}));
+			return {
+				success: true,
+				action: 'cancelContinuous',
+				message: '연속 학습을 취소했습니다. 테스트 기록은 보존됩니다.'
+			};
+		} catch (error) {
+			return fail(400, {
+				action: 'cancelContinuous',
+				message: error instanceof Error ? error.message : '연속 학습을 취소하지 못했습니다.'
+			});
+		}
 	}
 };

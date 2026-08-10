@@ -1,6 +1,7 @@
 import {
 	CONTINUOUS_BATCH_SIZE_DEFAULT,
 	CONTINUOUS_DAY_SIZE_DEFAULT,
+	TestSessionSchema,
 	OcrResponseSchema,
 	WordSchema,
 	createTestSession,
@@ -187,6 +188,16 @@ describe('continuous learning progression', () => {
 				range: { start: 1, end: 10 }
 			}
 		);
+	});
+
+	it('persists study mode and defaults legacy metadata to cards', () => {
+		expect(settings.studyMode).toBe('card');
+		expect(parseContinuousLearningSettings(1, 2, 'list').studyMode).toBe('list');
+		const session = completedTest('batch', { start: 1, end: 10 });
+		const legacyContinuous = { ...session.continuous! };
+		Reflect.deleteProperty(legacyContinuous, 'studyMode');
+		const legacy = TestSessionSchema.parse({ ...session, continuous: legacyContinuous });
+		expect(legacy.continuous?.studyMode).toBe('card');
 	});
 });
 
