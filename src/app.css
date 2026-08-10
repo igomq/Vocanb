@@ -623,45 +623,26 @@ h2 {
 	width: 100%;
 }
 
-.word-toolbar-create-actions {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 4px;
-	margin-left: auto;
-}
-
-.word-toolbar-create-actions form {
-	display: flex;
-}
-
-.word-toolbar-create-actions .button {
-	color: var(--ink);
-	white-space: nowrap;
-}
-
 .word-toolbar-right {
+	display: grid;
 	width: 100%;
-	justify-content: flex-start;
+	grid-template-columns: repeat(6, minmax(0, 1fr));
+	gap: 8px;
 }
 
 .word-toolbar-group {
-	display: flex;
-	min-width: 0;
-	flex: 0 1 auto;
-	flex-wrap: wrap;
-	gap: 8px;
+	display: contents;
 }
 
 .word-toolbar-group form,
 .word-toolbar-group > .button {
 	display: flex;
 	min-width: 0;
-	flex: 0 1 auto;
+	width: 100%;
 }
 
 .word-toolbar-group form .button {
-	width: auto;
+	width: 100%;
 }
 
 .word-toolbar-group .button {
@@ -1461,6 +1442,10 @@ h2 {
 }
 
 @media (max-width: 820px) {
+	.word-toolbar-right {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+
 	.app-sidebar {
 		width: min(86vw, 300px);
 		transform: translateX(-102%);
