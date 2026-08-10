@@ -5,8 +5,10 @@ import {
 	nextContinuousLearningStep,
 	parseContinuousLearningSettings,
 	parseTestRange,
+	ResultStatusSchema,
 	removeWords,
 	summarizeTest,
+	type ResultStatus,
 	type TestSession,
 	type Word
 } from '$lib/domain';
@@ -351,6 +353,27 @@ export const actions: Actions = {
 					dayEnd: dayRange.end,
 					studyMode: step.settings.studyMode
 				});
+			} else if (data.get('source') === 'recent-result') {
+				const latest = latestCompletedTest(vocabulary);
+				if (!latest) throw new Error('완료된 테스트 결과가 없습니다.');
+				const statusValues = data.getAll('statuses');
+				if (!statusValues.length) throw new Error('결과 상태를 하나 이상 선택해 주세요.');
+				const statuses = new Set<ResultStatus>();
+				for (const value of statusValues) {
+					const status = ResultStatusSchema.safeParse(value);
+					if (!status.success) throw new Error('결과 상태를 확인해 주세요.');
+					statuses.add(status.data);
+				}
+				const matchingWordIds = new Set(
+					latest.items
+						.filter((item) => item.result && statuses.has(item.result))
+						.map((item) => item.wordId)
+				);
+				const words = vocabulary.words.filter((word) => matchingWordIds.has(word.id));
+				if (!words.length) throw new Error('선택한 결과의 단어가 없습니다.');
+				const numbers = words.map(({ number }) => number);
+				const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
+				created = createTestSession(words, range, order, direction);
 			} else {
 				const range = parseTestRange(
 					vocabulary.words,

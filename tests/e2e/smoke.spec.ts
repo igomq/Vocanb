@@ -109,6 +109,18 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 	await page.getByRole('button', { name: '테스트 완료' }).click();
 	await expect(page).toHaveURL(new RegExp(`/app/v/${vocabularyId}\\?completed=1$`));
 
+	await page.getByRole('button', { name: '테스트', exact: true }).first().click();
+	await testDialog.getByLabel('최근 결과 선택').check();
+	await testDialog.getByLabel('틀린 단어').check();
+	await testDialog.getByRole('button', { name: '테스트 시작' }).click();
+	await expect(page).toHaveURL(/\/test\/[0-9a-f-]{36}$/);
+	const recentResultRows = page.locator('.test-row');
+	await expect(recentResultRows).toHaveCount(1);
+	await expect(recentResultRows.first().locator('.test-prompt')).toHaveText('run');
+	await page.getByRole('button', { name: '나가기' }).click();
+	await page.getByRole('link', { name: '나가기' }).click();
+	await expect(page).toHaveURL(new RegExp(`/app/v/${vocabularyId}$`));
+
 	await page.getByRole('button', { name: '연속 학습', exact: true }).click();
 	const continuousDialog = page.locator('dialog[aria-labelledby="continuous-settings-title"]');
 	await continuousDialog.getByLabel('한 묶음 단어 수').fill('1');

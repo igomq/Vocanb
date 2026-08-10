@@ -326,6 +326,97 @@ describe('vocabulary word actions', () => {
 	});
 });
 
+describe('test start action', () => {
+	async function completedVocabulary() {
+		const vocabulary = await createVocabulary(userId, '최근 결과 테스트', '');
+		const now = new Date().toISOString();
+		const words: Word[] = [1, 2, 3, 4].map((number) => ({
+			id: crypto.randomUUID(),
+			number,
+			english: `word-${number}`,
+			meaning: `뜻-${number}`,
+			sourceImageId: null,
+			uncertain: false,
+			createdAt: now,
+			updatedAt: now
+		}));
+		const completed = createTestSession(
+			words,
+			{ start: 1, end: 4 },
+			'sequential',
+			'english-to-korean'
+		);
+		completed.completedAt = now;
+		(['correct', 'wrong', 'correct', 'ambiguous'] as const).forEach(
+			(result, index) => (completed.items[index].result = result)
+		);
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words,
+			tests: [completed]
+		}));
+		return { vocabulary, words };
+	}
+
+	async function start(vocabularyId: string, form: FormData) {
+		return actions.startTest!({
+			request: new Request('http://localhost', { method: 'POST', body: form }),
+			locals: { userId },
+			params: { id: vocabularyId }
+		} as never);
+	}
+
+	it('rejects recent-result requests without a completed result or statuses', async () => {
+		const empty = await createVocabulary(userId, '결과 없음', '');
+		const noResult = new FormData();
+		noResult.set('source', 'recent-result');
+		noResult.append('statuses', 'wrong');
+		expect(await start(empty.id, noResult)).toHaveProperty(
+			'data.message',
+			'완료된 테스트 결과가 없습니다.'
+		);
+
+		const { vocabulary } = await completedVocabulary();
+		const noStatuses = new FormData();
+		noStatuses.set('source', 'recent-result');
+		expect(await start(vocabulary.id, noStatuses)).toHaveProperty(
+			'data.message',
+			'결과 상태를 하나 이상 선택해 주세요.'
+		);
+
+		const noMatch = new FormData();
+		noMatch.set('source', 'recent-result');
+		noMatch.append('statuses', 'unknown');
+		expect(await start(vocabulary.id, noMatch)).toHaveProperty(
+			'data.message',
+			'선택한 결과의 단어가 없습니다.'
+		);
+	});
+
+	it('validates statuses and recomputes multiple selected results in master order', async () => {
+		const { vocabulary, words } = await completedVocabulary();
+		const invalid = new FormData();
+		invalid.set('source', 'recent-result');
+		invalid.append('statuses', 'not-a-status');
+		expect(await start(vocabulary.id, invalid)).toHaveProperty(
+			'data.message',
+			'결과 상태를 확인해 주세요.'
+		);
+
+		const form = new FormData();
+		form.set('source', 'recent-result');
+		form.append('statuses', 'wrong');
+		form.append('statuses', 'ambiguous');
+		form.append('wordIds', words[0].id);
+		await expect(start(vocabulary.id, form)).rejects.toMatchObject({ status: 303 });
+
+		const saved = await getVocabulary(userId, vocabulary.id);
+		const created = saved!.tests.at(-1)!;
+		expect(created.items.map(({ wordId }) => wordId)).toEqual([words[1].id, words[3].id]);
+		expect(created.range).toEqual({ start: 2, end: 4 });
+	});
+});
+
 describe('continuous learning actions', () => {
 	it('clears only continuous metadata while preserving test history', async () => {
 		const vocabulary = await createVocabulary(userId, '연속 취소', '');

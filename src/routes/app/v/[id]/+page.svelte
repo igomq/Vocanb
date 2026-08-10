@@ -72,6 +72,8 @@
 	let filterAll = $state(true);
 	let selectedStatuses = new SvelteSet<ResultStatus>();
 	let testAll = $state(true);
+	let testSource = $state<'range' | 'recent-result'>('range');
+	let testStatuses = new SvelteSet<ResultStatus>();
 	let testDialog: HTMLDialogElement | undefined = $state();
 	let continuousSettingsDialog: HTMLDialogElement | undefined = $state();
 	let wordDialog: HTMLDialogElement | undefined = $state();
@@ -195,6 +197,8 @@
 		testStart = range?.start ?? first;
 		testEnd = range?.end ?? last;
 		testAll = !range;
+		testSource = 'range';
+		testStatuses.clear();
 		testContinuousStep = continuous ?? null;
 		testDialog.showModal();
 	}
@@ -481,6 +485,11 @@
 		filterAll = false;
 		if (checked) selectedStatuses.add(status);
 		else selectedStatuses.delete(status);
+	}
+
+	function toggleTestStatus(event: Event, status: ResultStatus) {
+		if ((event.currentTarget as HTMLInputElement).checked) testStatuses.add(status);
+		else testStatuses.delete(status);
 	}
 
 	function warnBeforeUnload(event: BeforeUnloadEvent) {
@@ -1326,36 +1335,68 @@
 				</fieldset>
 			{:else}
 				<fieldset class="choice-group">
-					<legend>범위</legend>
-					<label class="choice"
-						><input type="checkbox" name="all" bind:checked={testAll} /> 전체 단어</label
-					>
+					<legend>출제 단어</legend>
 					<div class="choice-options">
-						<div class="field">
-							<label for="test-start">시작 번호</label>
-							<input
-								id="test-start"
-								name="start"
-								type="number"
-								min={data.vocabulary.words[0]?.number ?? 1}
-								max={data.vocabulary.words.at(-1)?.number ?? 1}
-								bind:value={testStart}
-								disabled={testAll}
-							/>
-						</div>
-						<div class="field">
-							<label for="test-end">끝 번호</label>
-							<input
-								id="test-end"
-								name="end"
-								type="number"
-								min={data.vocabulary.words[0]?.number ?? 1}
-								max={data.vocabulary.words.at(-1)?.number ?? 1}
-								bind:value={testEnd}
-								disabled={testAll}
-							/>
-						</div>
+						<label class="choice"
+							><input type="radio" name="source" value="range" bind:group={testSource} /> 범위 선택</label
+						>
+						<label class="choice"
+							><input
+								type="radio"
+								name="source"
+								value="recent-result"
+								bind:group={testSource}
+								disabled={!data.latestResult}
+							/> 최근 결과 선택</label
+						>
 					</div>
+					{#if testSource === 'range'}
+						<label class="choice"
+							><input type="checkbox" name="all" bind:checked={testAll} /> 전체 단어</label
+						>
+						<div class="choice-options">
+							<div class="field">
+								<label for="test-start">시작 번호</label>
+								<input
+									id="test-start"
+									name="start"
+									type="number"
+									min={data.vocabulary.words[0]?.number ?? 1}
+									max={data.vocabulary.words.at(-1)?.number ?? 1}
+									bind:value={testStart}
+									disabled={testAll}
+								/>
+							</div>
+							<div class="field">
+								<label for="test-end">끝 번호</label>
+								<input
+									id="test-end"
+									name="end"
+									type="number"
+									min={data.vocabulary.words[0]?.number ?? 1}
+									max={data.vocabulary.words.at(-1)?.number ?? 1}
+									bind:value={testEnd}
+									disabled={testAll}
+								/>
+							</div>
+						</div>
+					{:else}
+						<p class="field-note">가장 최근에 완료한 테스트에서 고른 결과의 단어만 출제합니다.</p>
+						<div class="choice-options">
+							{#each statusOptions as option (option.value)}
+								<label class="choice"
+									><input
+										type="checkbox"
+										name="statuses"
+										value={option.value}
+										checked={testStatuses.has(option.value)}
+										onchange={(event) => toggleTestStatus(event, option.value)}
+									/>
+									{option.label}</label
+								>
+							{/each}
+						</div>
+					{/if}
 				</fieldset>
 			{/if}
 
