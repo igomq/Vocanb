@@ -623,6 +623,23 @@ h2 {
 	width: 100%;
 }
 
+.word-toolbar-create-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-left: auto;
+}
+
+.word-toolbar-create-actions form {
+	display: flex;
+}
+
+.word-toolbar-create-actions .button {
+	color: var(--ink);
+	white-space: nowrap;
+}
+
 .word-toolbar-right {
 	width: 100%;
 	justify-content: flex-start;

@@ -932,27 +932,9 @@
 					onclick={() => leaveDialog?.showModal()}>{data.vocabulary.title}</button
 				>
 				<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
-			</div>
-			<div class="word-toolbar-right">
-				{#if selectionMode}
-					<div class="word-toolbar-group word-toolbar-selection-actions">
-						<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
-							>전체 선택</button
-						>
-						<button
-							class="button button-danger"
-							type="submit"
-							form="bulk-delete-form"
-							disabled={!selectedWordIds.size || bulkDeletePending}
-							>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
-						>
-						<button class="button button-secondary" type="button" onclick={closeSelection}
-							>취소</button
-						>
-					</div>
-				{:else}
-					<div class="word-toolbar-group word-toolbar-primary-actions">
-						<button class="button button-secondary" type="button" onclick={() => openWordDialog()}
+				{#if !selectionMode}
+					<div class="word-toolbar-create-actions">
+						<button class="button button-quiet" type="button" onclick={() => openWordDialog()}
 							>＋ 단어 추가</button
 						>
 						<form
@@ -973,7 +955,7 @@
 								onchange={openUploadSettings}
 							/>
 							<button
-								class="button button-secondary"
+								class="button button-quiet"
 								type="button"
 								aria-label="단어 사진 추가"
 								onclick={openPhotoPicker}
@@ -983,6 +965,26 @@
 							</button>
 						</form>
 					</div>
+				{/if}
+			</div>
+			<div class="word-toolbar-right">
+				{#if selectionMode}
+					<div class="word-toolbar-group word-toolbar-selection-actions">
+						<button class="button button-quiet" type="button" onclick={toggleAllFiltered}
+							>전체 선택</button
+						>
+						<button
+							class="button button-danger"
+							type="submit"
+							form="bulk-delete-form"
+							disabled={!selectedWordIds.size || bulkDeletePending}
+							>{bulkDeletePending ? '삭제 중…' : `삭제 ${selectedWordIds.size}`}</button
+						>
+						<button class="button button-secondary" type="button" onclick={closeSelection}
+							>취소</button
+						>
+					</div>
+				{:else}
 					<div class="word-toolbar-group word-toolbar-secondary-actions">
 						<button
 							class="button button-secondary"
