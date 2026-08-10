@@ -69,7 +69,20 @@ async function deleteVocabularyWords(
 
 export const actions: Actions = {
 	upload: async ({ request, locals, params }) => {
-		const data = await request.formData();
+		let data: FormData;
+		try {
+			data = await request.formData();
+		} catch (error) {
+			console.error(
+				'Upload form parsing failed:',
+				{ method: request.method, path: new URL(request.url).pathname },
+				error
+			);
+			return fail(400, {
+				action: 'upload',
+				message: '업로드 요청을 읽지 못했습니다. 사진을 다시 선택해 주세요.'
+			});
+		}
 		const files = data
 			.getAll('images')
 			.filter((value): value is File => value instanceof File && value.size > 0);

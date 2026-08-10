@@ -67,6 +67,27 @@ async function context(vocabularyId: string, form: FormData) {
 }
 
 describe('vocabulary upload action', () => {
+	it('logs malformed multipart requests and returns a controlled error', async () => {
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const parseError = new Error('multipart aborted');
+		const result = await actions.upload!({
+			request: {
+				method: 'POST',
+				url: 'http://localhost/app/v/test?/upload',
+				formData: vi.fn().mockRejectedValue(parseError)
+			},
+			locals: { userId },
+			params: { id: crypto.randomUUID() }
+		} as never);
+
+		expect(result).toMatchObject({ status: 400 });
+		expect(errors).toHaveBeenCalledWith(
+			'Upload form parsing failed:',
+			{ method: 'POST', path: '/app/v/test' },
+			parseError
+		);
+	});
+
 	it('accepts 20 images and rejects 21', async () => {
 		const vocabulary = await createVocabulary(userId, '사진 제한', '');
 		vi.spyOn(ocrProvider, 'extract').mockResolvedValue(

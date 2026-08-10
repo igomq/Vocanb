@@ -32,7 +32,7 @@ pnpm dev
 - `VERTEX_MODEL`: `gemini-3.6-flash` 고정
 - `DATA_DIR`: 배포와 분리된 영구 데이터 경로
 - `ORIGIN`: 외부 HTTPS origin
-- `BODY_SIZE_LIMIT`: 업로드 요청 상한(기본 배포값 `50M`)
+- `BODY_SIZE_LIMIT`: adapter-node 요청 상한(배포값 `92M`; 앱의 사진 합계 90MiB보다 크게 유지)
 
 ## 검증과 빌드
 

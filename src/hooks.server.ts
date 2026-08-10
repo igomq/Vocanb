@@ -10,10 +10,21 @@ export const handle: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-export const handleError: HandleServerError = ({ error }) => {
+export const handleError: HandleServerError = ({ error, event, status, message }) => {
 	console.error(
 		'Unhandled server error:',
-		error instanceof Error ? error.message : 'unknown error'
+		{
+			method: event.request.method,
+			path: event.url.pathname,
+			route: event.route.id,
+			status,
+			message,
+			requestId:
+				event.request.headers.get('cf-ray') ??
+				event.request.headers.get('x-request-id') ??
+				undefined
+		},
+		error
 	);
 	return { message: '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.' };
 };

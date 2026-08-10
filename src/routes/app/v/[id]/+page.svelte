@@ -470,7 +470,8 @@
 					pronunciationRequestStarted = pronunciationRequestKey;
 				}
 				cleanup(true);
-			} catch {
+			} catch (error) {
+				console.error('Upload result handling failed:', error);
 				uploadError =
 					'분석 결과를 확인하지 못했습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
 				cleanup(false);
