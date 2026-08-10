@@ -32,11 +32,12 @@ describe('OCR provider boundary', () => {
 	});
 
 	it('prioritizes prominent headwords and gates secondary words on a target', () => {
-		expect(buildOcrUserInstruction()).toMatch(/large or bold English headwords/);
-		expect(buildOcrUserInstruction()).toMatch(/only default entries/);
+		expect(buildOcrUserInstruction()).toMatch(/visually prominent main English headwords/);
+		expect(buildOcrUserInstruction()).toMatch(/Ignore small incidental words, fragments/);
 		const targeted = buildOcrUserInstruction(3);
 		expect(targeted).toMatch(/prominent headwords alone do not reach the target/);
-		expect(targeted).toMatch(/clearly paired/);
+		expect(targeted).toMatch(/complete printed vocabulary entry/);
+		expect(targeted).toMatch(/Never use fragments or incidental text/);
 		expect(targeted).toMatch(/hard maximum target/);
 	});
 

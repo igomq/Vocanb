@@ -67,6 +67,19 @@ async function context(vocabularyId: string, form: FormData) {
 }
 
 describe('vocabulary upload action', () => {
+	it('accepts 20 images and rejects 21', async () => {
+		const vocabulary = await createVocabulary(userId, '사진 제한', '');
+		vi.spyOn(ocrProvider, 'extract').mockResolvedValue(
+			response([{ sourceOrder: 1, english: 'word', meaning: '뜻' }])
+		);
+		const files = await Promise.all(
+			Array.from({ length: 21 }, (_, index) => imageFile(`${index}.png`))
+		);
+
+		expect(await upload(vocabulary.id, files.slice(0, 20))).toMatchObject({ success: true });
+		expect(await upload(vocabulary.id, files)).toMatchObject({ status: 400 });
+	});
+
 	it('passes per-image targets to OCR in image order', async () => {
 		const vocabulary = await createVocabulary(userId, '업로드', '');
 		const extract = vi

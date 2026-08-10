@@ -39,6 +39,9 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 	await page.locator('#photo-upload').setInputFiles(invalidImage);
 	await page.getByRole('button', { name: '사진 분석' }).click();
 	await expect(progressDialog).toBeVisible();
+	await expect(page.locator('#ocr-progress-description')).toContainText(
+		'1장의 사진에서 단어를 읽고 저장하는 중'
+	);
 	const pendingUrl = page.url();
 	await page.goBack({ timeout: 2_000 }).catch(() => undefined);
 	await expect(page).toHaveURL(pendingUrl);

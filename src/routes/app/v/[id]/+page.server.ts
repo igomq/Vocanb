@@ -75,10 +75,10 @@ export const actions: Actions = {
 			.filter((value): value is File => value instanceof File && value.size > 0);
 		if (!files.length)
 			return fail(400, { action: 'upload', message: '추가할 사진을 선택해 주세요.' });
-		if (files.length > 10)
+		if (files.length > 20)
 			return fail(400, {
 				action: 'upload',
-				message: '사진은 한 번에 최대 10장까지 추가할 수 있습니다.'
+				message: '사진은 한 번에 최대 20장까지 추가할 수 있습니다.'
 			});
 		if (files.reduce((total, file) => total + file.size, 0) > 90 * 1024 * 1024) {
 			return fail(400, {
