@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test.describe.configure({ mode: 'serial' });
 
 test('covers the core vocabulary flow without Vertex', async ({ page }) => {
-	const title = 'Playwright vocabulary';
+	const title = `Playwright vocabulary ${Date.now()}`;
 	await page.goto('/login');
 	await page.getByLabel('아이디').fill('playwright');
 	await page.getByLabel('비밀번호').fill('playwright-password');
@@ -27,25 +27,39 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 
 	let releaseUpload!: () => void;
 	const uploadHeld = new Promise<void>((resolve) => (releaseUpload = resolve));
-	const uploadRoute = `**/app/v/${vocabularyId}*`;
+	let resolveUploadIntercepted!: () => void;
+	const uploadIntercepted = new Promise<void>((resolve) => (resolveUploadIntercepted = resolve));
+	const uploadPath = new URL(page.url()).pathname;
+	const uploadRoute = `**${uploadPath}**`;
 	await page.route(uploadRoute, async (route) => {
-		if (route.request().method() === 'POST' && route.request().url().includes('?/upload')) {
+		const request = route.request();
+		const requestUrl = new URL(request.url());
+		if (
+			request.method() === 'POST' &&
+			requestUrl.pathname === uploadPath &&
+			requestUrl.searchParams.has('/upload')
+		) {
+			resolveUploadIntercepted();
 			await uploadHeld;
 			await route.continue();
 			return;
 		}
 		await route.fallback();
 	});
-	await page.locator('#photo-upload').setInputFiles(invalidImage);
-	await page.getByRole('button', { name: '사진 분석' }).click();
-	await expect(progressDialog).toBeVisible();
-	await expect(page.locator('#ocr-progress-description')).toContainText(
-		'1장의 사진에서 단어를 읽고 저장하는 중'
-	);
-	const pendingUrl = page.url();
-	await page.goBack({ timeout: 2_000 }).catch(() => undefined);
-	await expect(page).toHaveURL(pendingUrl);
-	releaseUpload();
+	try {
+		await page.locator('#photo-upload').setInputFiles(invalidImage);
+		await page.getByRole('button', { name: '사진 분석' }).click();
+		await uploadIntercepted;
+		await expect(progressDialog).toBeVisible();
+		await expect(page.locator('#ocr-progress-description')).toContainText(
+			'1장의 사진에서 단어를 읽고 저장하는 중'
+		);
+		const pendingUrl = page.url();
+		await page.goBack({ timeout: 2_000 }).catch(() => undefined);
+		await expect(page).toHaveURL(pendingUrl);
+	} finally {
+		releaseUpload();
+	}
 	await expect(page.locator('.message-error').last()).toContainText(
 		/손상되었거나|분석 연결이 중단되었습니다/
 	);
