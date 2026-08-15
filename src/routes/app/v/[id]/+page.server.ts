@@ -1,10 +1,16 @@
 import {
 	createTestSession,
+	latestCompletedResults,
 	latestCompletedTest,
 	normalizeOcrEntry,
+	nextContinuousLearningStep,
+	parseContinuousLearningSettings,
 	parseTestRange,
+	ResultStatusSchema,
 	removeWords,
-	summarizeTest,
+	summarizeResults,
+	toggleWordStar,
+	type ResultStatus,
 	type TestSession,
 	type Word
 } from '$lib/domain';
@@ -19,18 +25,18 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const vocabulary = await getVocabulary(locals.userId!, params.id);
 	if (!vocabulary) redirect(303, '/app');
 	const latest = latestCompletedTest(vocabulary);
+	const latestResults = latestCompletedResults(vocabulary);
 	const vocabularyView = { ...vocabulary, tests: undefined };
 	return {
 		vocabulary: vocabularyView,
-		latestResult: latest
+		latestResult: latestResults.size
 			? {
-					id: latest.id,
-					summary: summarizeTest(latest, vocabulary.words.length),
-					results: Object.fromEntries(
-						latest.items.filter((item) => item.result).map((item) => [item.wordId, item.result])
-					)
+					id: latest?.id,
+					summary: summarizeResults(latestResults.values(), vocabulary.words.length),
+					results: Object.fromEntries(latestResults)
 				}
-			: null
+			: null,
+		continuous: nextContinuousLearningStep(vocabulary)
 	};
 };
 
@@ -122,6 +128,14 @@ export const actions: Actions = {
 		try {
 			normalized = await mapWithConcurrency(files, 2, normalizeUpload);
 		} catch (error) {
+			console.error(
+				'Upload image normalization failed:',
+				{
+					vocabularyId: params.id,
+					images: files.map(({ name, size, type }) => ({ name, size, type }))
+				},
+				error
+			);
 			return fail(400, {
 				action: 'upload',
 				message: error instanceof Error ? error.message : '이미지를 읽을 수 없습니다.'
@@ -134,7 +148,15 @@ export const actions: Actions = {
 				ocrProvider.extract(bytes, targetWordCounts?.[index])
 			);
 		} catch (error) {
-			console.error('OCR failed:', error instanceof Error ? error.message : 'unknown error');
+			console.error(
+				'Upload OCR failed:',
+				{
+					vocabularyId: params.id,
+					imageCount: files.length,
+					totalBytes: files.reduce((total, file) => total + file.size, 0)
+				},
+				error
+			);
 			return fail(502, {
 				action: 'upload',
 				message: '단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.'
@@ -167,14 +189,21 @@ export const actions: Actions = {
 						...(entry.partOfSpeech ? { partOfSpeech: entry.partOfSpeech } : {}),
 						sourceImageId: imageId,
 						uncertain: entry.uncertain,
+						starred: false,
 						createdAt: now,
 						updatedAt: now
 					};
 				})
 			});
 		}
-		if (!prepared.length)
+		if (!prepared.length) {
+			console.error('Upload produced no storable words:', {
+				vocabularyId: params.id,
+				imageCount: files.length,
+				ocrEntryCounts: results.map((result) => result.entries.length)
+			});
 			return fail(422, { action: 'upload', message: '사진에서 저장할 단어를 찾지 못했습니다.' });
+		}
 
 		const written: string[] = [];
 		try {
@@ -209,7 +238,12 @@ export const actions: Actions = {
 			}
 			console.error(
 				'Upload save failed:',
-				error instanceof Error ? error.message : 'unknown error'
+				{
+					vocabularyId: params.id,
+					imageCount: files.length,
+					writtenCount: written.length
+				},
+				error
 			);
 			return fail(500, {
 				action: 'upload',
@@ -233,6 +267,7 @@ export const actions: Actions = {
 					...(partOfSpeech ? { partOfSpeech } : {}),
 					sourceImageId: null,
 					uncertain: false,
+					starred: false,
 					createdAt: now,
 					updatedAt: now
 				});
@@ -279,6 +314,20 @@ export const actions: Actions = {
 			});
 		}
 	},
+	toggleStar: async ({ request, locals, params }) => {
+		const wordId = String((await request.formData()).get('wordId') || '');
+		try {
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) =>
+				toggleWordStar(vocabulary, wordId)
+			);
+			return { success: true, action: 'toggleStar' };
+		} catch (error) {
+			return fail(400, {
+				action: 'toggleStar',
+				message: error instanceof Error ? error.message : '별표를 저장하지 못했습니다.'
+			});
+		}
+	},
 	deleteWord: async ({ request, locals, params }) => {
 		const wordId = String((await request.formData()).get('wordId') || '');
 		try {
@@ -322,16 +371,66 @@ export const actions: Actions = {
 			const vocabulary = await getVocabulary(locals.userId!, params.id);
 			if (!vocabulary)
 				return fail(404, { action: 'startTest', message: '단어장을 찾을 수 없습니다.' });
-			const range = parseTestRange(
-				vocabulary.words,
-				data.get('all') === 'on',
-				data.get('start'),
-				data.get('end')
-			);
 			const order = data.get('order') === 'random' ? 'random' : 'sequential';
 			const direction =
 				data.get('direction') === 'korean-to-english' ? 'korean-to-english' : 'english-to-korean';
-			created = createTestSession(range.words, range, order, direction);
+			if (data.get('continuous') === 'on') {
+				const settings = parseContinuousLearningSettings(
+					data.get('continuousBatchSize'),
+					data.get('continuousDaySize'),
+					data.get('continuousStudyMode')
+				);
+				const step = nextContinuousLearningStep(vocabulary, settings);
+				const range = step?.range;
+				const dayRange = step?.dayRange;
+				if (step?.status !== 'ready' || !step.phase || !range || !dayRange)
+					throw new Error('진행 중인 연속 학습 테스트를 먼저 완료해 주세요.');
+				const words = vocabulary.words.filter(
+					(word) => word.number >= range.start && word.number <= range.end
+				);
+				if (!words.length) throw new Error('테스트할 단어가 없습니다.');
+				created = createTestSession(words, range, order, direction, Math.random, {
+					phase: step.phase,
+					batchSize: step.settings.batchSize,
+					daySize: step.settings.daySize,
+					dayStart: dayRange.start,
+					dayEnd: dayRange.end,
+					studyMode: step.settings.studyMode
+				});
+			} else if (data.get('source') === 'recent-result') {
+				const latestResults = latestCompletedResults(vocabulary);
+				if (!latestResults.size) throw new Error('완료된 테스트 결과가 없습니다.');
+				const statusValues = data.getAll('statuses');
+				if (!statusValues.length) throw new Error('결과 상태를 하나 이상 선택해 주세요.');
+				const statuses = new Set<ResultStatus>();
+				for (const value of statusValues) {
+					const status = ResultStatusSchema.safeParse(value);
+					if (!status.success) throw new Error('결과 상태를 확인해 주세요.');
+					statuses.add(status.data);
+				}
+				const matchingWordIds = new Set(
+					[...latestResults].filter(([, result]) => statuses.has(result)).map(([wordId]) => wordId)
+				);
+				const words = vocabulary.words.filter((word) => matchingWordIds.has(word.id));
+				if (!words.length) throw new Error('선택한 결과의 단어가 없습니다.');
+				const numbers = words.map(({ number }) => number);
+				const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
+				created = createTestSession(words, range, order, direction);
+			} else if (data.get('source') === 'starred') {
+				const words = vocabulary.words.filter((word) => word.starred);
+				if (!words.length) throw new Error('별표한 단어가 없습니다.');
+				const numbers = words.map(({ number }) => number);
+				const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
+				created = createTestSession(words, range, order, direction);
+			} else {
+				const range = parseTestRange(
+					vocabulary.words,
+					data.get('all') === 'on',
+					data.get('start'),
+					data.get('end')
+				);
+				created = createTestSession(range.words, range, order, direction);
+			}
 			await updateVocabulary(locals.userId!, params.id, (current) => {
 				current.tests.push(created);
 				return current;
@@ -343,5 +442,27 @@ export const actions: Actions = {
 			});
 		}
 		redirect(303, `/app/v/${params.id}/test/${created.id}`);
+	},
+	cancelContinuous: async ({ locals, params }) => {
+		try {
+			await updateVocabulary(locals.userId!, params.id, (vocabulary) => ({
+				...vocabulary,
+				tests: vocabulary.tests.map((test) => {
+					const history = { ...test };
+					delete history.continuous;
+					return history;
+				})
+			}));
+			return {
+				success: true,
+				action: 'cancelContinuous',
+				message: '연속 학습을 취소했습니다. 테스트 기록은 보존됩니다.'
+			};
+		} catch (error) {
+			return fail(400, {
+				action: 'cancelContinuous',
+				message: error instanceof Error ? error.message : '연속 학습을 취소하지 못했습니다.'
+			});
+		}
 	}
 };

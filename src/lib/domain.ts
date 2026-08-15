@@ -4,6 +4,69 @@ export const resultStatuses = ['correct', 'wrong', 'unknown', 'ambiguous'] as co
 export const ResultStatusSchema = z.enum(resultStatuses);
 export type ResultStatus = z.infer<typeof ResultStatusSchema>;
 
+export const CONTINUOUS_BATCH_SIZE_DEFAULT = 10;
+export const CONTINUOUS_DAY_SIZE_DEFAULT = 40;
+export const CONTINUOUS_BATCH_SIZE_MIN = 1;
+export const CONTINUOUS_BATCH_SIZE_MAX = 500;
+export const CONTINUOUS_DAY_SIZE_MIN = 1;
+export const CONTINUOUS_DAY_SIZE_MAX = 5000;
+export const continuousStudyModes = ['card', 'list'] as const;
+export type ContinuousStudyMode = (typeof continuousStudyModes)[number];
+
+export const ContinuousLearningSettingsSchema = z
+	.object({
+		batchSize: z.number().int().min(CONTINUOUS_BATCH_SIZE_MIN).max(CONTINUOUS_BATCH_SIZE_MAX),
+		daySize: z.number().int().min(CONTINUOUS_DAY_SIZE_MIN).max(CONTINUOUS_DAY_SIZE_MAX),
+		studyMode: z.enum(continuousStudyModes).default('card')
+	})
+	.strict()
+	.refine(({ batchSize, daySize }) => batchSize <= daySize, {
+		message: '묶음 개수는 하루 누적 개수보다 클 수 없습니다.'
+	});
+export type ContinuousLearningSettings = z.infer<typeof ContinuousLearningSettingsSchema>;
+
+const continuousSettingError = `묶음 개수는 ${CONTINUOUS_BATCH_SIZE_MIN}~${CONTINUOUS_BATCH_SIZE_MAX}, 하루 누적 개수는 ${CONTINUOUS_DAY_SIZE_MIN}~${CONTINUOUS_DAY_SIZE_MAX} 사이의 정수로 입력해 주세요. 묶음 개수는 하루 누적 개수보다 클 수 없습니다.`;
+
+export function parseContinuousLearningSettings(
+	batchValue: unknown,
+	dayValue: unknown,
+	studyModeValue: unknown = 'card'
+) {
+	const numberValue = (value: unknown) =>
+		typeof value === 'number'
+			? value
+			: typeof value === 'string' && value.trim()
+				? Number(value.trim())
+				: Number.NaN;
+	const parsed = ContinuousLearningSettingsSchema.safeParse({
+		batchSize: numberValue(batchValue),
+		daySize: numberValue(dayValue),
+		studyMode: studyModeValue
+	});
+	if (!parsed.success) throw new Error(continuousSettingError);
+	return parsed.data;
+}
+
+export const continuousPhases = ['batch', 'cumulative'] as const;
+export const ContinuousTestMetadataSchema = z
+	.object({
+		phase: z.enum(continuousPhases),
+		batchSize: z.number().int().positive(),
+		daySize: z.number().int().positive(),
+		dayStart: z.number().int().positive(),
+		dayEnd: z.number().int().positive(),
+		studyMode: z.enum(continuousStudyModes).default('card')
+	})
+	.strict()
+	.refine(({ batchSize, daySize }) => batchSize <= daySize, {
+		message: '묶음 개수는 하루 누적 개수보다 클 수 없습니다.'
+	})
+	.refine(({ dayStart, dayEnd }) => dayStart <= dayEnd, {
+		message: '하루 범위가 올바르지 않습니다.'
+	});
+export type ContinuousPhase = (typeof continuousPhases)[number];
+export type ContinuousTestMetadata = z.infer<typeof ContinuousTestMetadataSchema>;
+
 export const PRONUNCIATION_GUIDE_VERSION = 2;
 
 export const PronunciationSchema = z
@@ -29,6 +92,7 @@ export const WordSchema = z
 		pronunciation: PronunciationSchema.nullable().optional(),
 		sourceImageId: z.string().uuid().nullable(),
 		uncertain: z.boolean().default(false),
+		starred: z.boolean().default(false).optional(),
 		createdAt: z.string(),
 		updatedAt: z.string()
 	})
@@ -63,7 +127,8 @@ export const TestSessionSchema = z
 		range: z.object({ start: z.number().int().positive(), end: z.number().int().positive() }),
 		order: z.enum(['sequential', 'random']),
 		direction: z.enum(['english-to-korean', 'korean-to-english']),
-		items: z.array(TestItemSchema).min(1)
+		items: z.array(TestItemSchema).min(1),
+		continuous: ContinuousTestMetadataSchema.optional()
 	})
 	.strict();
 export type TestSession = z.infer<typeof TestSessionSchema>;
@@ -162,6 +227,15 @@ export function removeWords(vocabulary: Vocabulary, wordIds: ReadonlySet<string>
 	};
 }
 
+export function toggleWordStar(vocabulary: Vocabulary, wordId: string) {
+	if (!WordSchema.shape.id.safeParse(wordId).success) throw new Error('단어를 찾을 수 없습니다.');
+	const word = vocabulary.words.find((candidate) => candidate.id === wordId);
+	if (!word) throw new Error('단어를 찾을 수 없습니다.');
+	word.starred = !word.starred;
+	word.updatedAt = new Date().toISOString();
+	return vocabulary;
+}
+
 export function parseTestRange(
 	words: Word[],
 	all: boolean,
@@ -187,7 +261,8 @@ export function createTestSession(
 	range: { start: number; end: number },
 	order: TestSession['order'],
 	direction: TestSession['direction'],
-	random: () => number = Math.random
+	random: () => number = Math.random,
+	continuous?: ContinuousTestMetadata
 ): TestSession {
 	const words = [...selectedWords];
 	if (order === 'random') {
@@ -202,6 +277,7 @@ export function createTestSession(
 		range,
 		order,
 		direction,
+		...(continuous ? { continuous } : {}),
 		items: words.map(({ id, number, english, meaning, partOfSpeech }) => ({
 			wordId: id,
 			number,
@@ -213,14 +289,122 @@ export function createTestSession(
 }
 
 export function summarizeTest(test: TestSession, totalWords: number) {
-	const evaluated = test.items.filter((item) => item.result);
+	return summarizeResults(
+		test.items.flatMap((item) => (item.result ? [item.result] : [])),
+		totalWords
+	);
+}
+
+export function summarizeResults(results: Iterable<ResultStatus>, totalWords: number) {
+	const evaluated = [...results];
 	return {
-		correct: evaluated.filter((item) => item.result === 'correct').length,
+		correct: evaluated.filter((result) => result === 'correct').length,
 		tested: evaluated.length,
 		total: totalWords
 	};
 }
 
+export function latestCompletedResults(vocabulary: Pick<Vocabulary, 'tests'>) {
+	const results = new Map<string, ResultStatus>();
+	for (const test of [...vocabulary.tests].reverse()) {
+		if (!test.completedAt) continue;
+		for (const item of test.items) {
+			if (item.result && !results.has(item.wordId)) results.set(item.wordId, item.result);
+		}
+	}
+	return results;
+}
+
 export function latestCompletedTest(vocabulary: Vocabulary) {
 	return [...vocabulary.tests].reverse().find((test) => test.completedAt);
+}
+
+export type ContinuousLearningProgress = {
+	status: 'ready' | 'in-progress' | 'complete';
+	settings: ContinuousLearningSettings;
+	phase?: ContinuousPhase;
+	range?: { start: number; end: number };
+	dayRange?: { start: number; end: number };
+	testId?: string;
+	completedDays: number;
+};
+
+export function nextContinuousLearningStep(
+	vocabulary: Pick<Vocabulary, 'words' | 'tests'>,
+	settings?: ContinuousLearningSettings
+): ContinuousLearningProgress | null {
+	const first = vocabulary.words[0]?.number;
+	const last = vocabulary.words.at(-1)?.number;
+	if (first === undefined || last === undefined) return null;
+
+	const completedDays = vocabulary.tests.filter(
+		(test) => test.continuous?.phase === 'cumulative' && test.completedAt
+	).length;
+	const latest = [...vocabulary.tests].reverse().find((test) => test.continuous);
+	if (!latest) {
+		if (!settings) return null;
+		const dayEnd = Math.min(last, first + settings.daySize - 1);
+		return {
+			status: 'ready',
+			settings,
+			phase: 'batch',
+			range: { start: first, end: Math.min(dayEnd, first + settings.batchSize - 1) },
+			dayRange: { start: first, end: dayEnd },
+			completedDays
+		};
+	}
+
+	const metadata = latest.continuous!;
+	const currentSettings = {
+		batchSize: metadata.batchSize,
+		daySize: metadata.daySize,
+		studyMode: metadata.studyMode
+	};
+	const dayRange = { start: metadata.dayStart, end: metadata.dayEnd };
+	if (!latest.completedAt) {
+		return {
+			status: 'in-progress',
+			settings: currentSettings,
+			phase: metadata.phase,
+			range: latest.range,
+			dayRange,
+			testId: latest.id,
+			completedDays
+		};
+	}
+
+	if (metadata.phase === 'cumulative') {
+		const start = latest.range.end + 1;
+		if (start > last) return { status: 'complete', settings: currentSettings, completedDays };
+		const nextDayEnd = Math.min(last, start + metadata.daySize - 1);
+		return {
+			status: 'ready',
+			settings: currentSettings,
+			phase: 'batch',
+			range: { start, end: Math.min(nextDayEnd, start + metadata.batchSize - 1) },
+			dayRange: { start, end: nextDayEnd },
+			completedDays
+		};
+	}
+
+	if (latest.range.end >= metadata.dayEnd || latest.range.end >= last) {
+		return {
+			status: 'ready',
+			settings: currentSettings,
+			phase: 'cumulative',
+			range: { start: metadata.dayStart, end: latest.range.end },
+			dayRange,
+			completedDays
+		};
+	}
+
+	const start = latest.range.end + 1;
+	return {
+		status: 'ready',
+		settings: currentSettings,
+		phase: 'batch',
+		range: { start, end: Math.min(metadata.dayEnd, start + metadata.batchSize - 1) },
+		dayRange,
+		completedDays
+	};
 }

@@ -1,8 +1,14 @@
 import {
+	CONTINUOUS_BATCH_SIZE_DEFAULT,
+	CONTINUOUS_DAY_SIZE_DEFAULT,
+	TestSessionSchema,
 	OcrResponseSchema,
 	WordSchema,
 	createTestSession,
+	latestCompletedResults,
+	nextContinuousLearningStep,
 	normalizeOcrEntry,
+	parseContinuousLearningSettings,
 	parseTestRange,
 	removeWords,
 	summarizeTest,
@@ -18,6 +24,7 @@ const words: Word[] = [1, 2, 3].map((number) => ({
 	meaning: `뜻-${number}`,
 	sourceImageId: '10000000-0000-4000-8000-000000000001',
 	uncertain: false,
+	starred: false,
 	createdAt: '2026-01-01T00:00:00.000Z',
 	updatedAt: '2026-01-01T00:00:00.000Z'
 }));
@@ -111,11 +118,126 @@ describe('test range and mode', () => {
 	});
 });
 
+describe('continuous learning progression', () => {
+	const progressWords = Array.from({ length: 50 }, (_, index) => ({
+		...words[0],
+		id: crypto.randomUUID(),
+		number: index + 1,
+		english: `word-${index + 1}`
+	}));
+	const settings = parseContinuousLearningSettings(
+		CONTINUOUS_BATCH_SIZE_DEFAULT,
+		CONTINUOUS_DAY_SIZE_DEFAULT
+	);
+
+	function completedTest(
+		phase: 'batch' | 'cumulative',
+		range: { start: number; end: number },
+		dayRange = { start: 1, end: 40 }
+	) {
+		const session = createTestSession(
+			progressWords.filter((word) => word.number >= range.start && word.number <= range.end),
+			range,
+			'sequential',
+			'english-to-korean',
+			Math.random,
+			{ ...settings, phase, dayStart: dayRange.start, dayEnd: dayRange.end }
+		);
+		session.completedAt = '2026-01-01T00:00:00.000Z';
+		return session;
+	}
+
+	it('moves through batches, a day cumulative test, and the next day', () => {
+		const vocabulary = { words: progressWords, tests: [] as Vocabulary['tests'] };
+		expect(nextContinuousLearningStep(vocabulary, settings)).toMatchObject({
+			status: 'ready',
+			phase: 'batch',
+			range: { start: 1, end: 10 },
+			dayRange: { start: 1, end: 40 }
+		});
+
+		for (const end of [10, 20, 30]) {
+			vocabulary.tests.push(completedTest('batch', { start: end - 9, end }));
+		}
+		expect(nextContinuousLearningStep(vocabulary)).toMatchObject({
+			phase: 'batch',
+			range: { start: 31, end: 40 }
+		});
+
+		vocabulary.tests.push(completedTest('batch', { start: 31, end: 40 }));
+		expect(nextContinuousLearningStep(vocabulary)).toMatchObject({
+			phase: 'cumulative',
+			range: { start: 1, end: 40 }
+		});
+
+		vocabulary.tests.push(completedTest('cumulative', { start: 1, end: 40 }));
+		expect(nextContinuousLearningStep(vocabulary)).toMatchObject({
+			phase: 'batch',
+			range: { start: 41, end: 50 },
+			dayRange: { start: 41, end: 50 }
+		});
+	});
+
+	it('validates settings and resumes an unfinished test', () => {
+		expect(() => parseContinuousLearningSettings('0', '40')).toThrow();
+		expect(() => parseContinuousLearningSettings('41', '40')).toThrow();
+		const unfinished = completedTest('batch', { start: 1, end: 10 });
+		delete unfinished.completedAt;
+		expect(nextContinuousLearningStep({ words: progressWords, tests: [unfinished] })).toMatchObject(
+			{
+				status: 'in-progress',
+				testId: unfinished.id,
+				range: { start: 1, end: 10 }
+			}
+		);
+	});
+
+	it('persists study mode and defaults legacy metadata to cards', () => {
+		expect(settings.studyMode).toBe('card');
+		expect(parseContinuousLearningSettings(1, 2, 'list').studyMode).toBe('list');
+		const session = completedTest('batch', { start: 1, end: 10 });
+		const legacyContinuous = { ...session.continuous! };
+		Reflect.deleteProperty(legacyContinuous, 'studyMode');
+		const legacy = TestSessionSchema.parse({ ...session, continuous: legacyContinuous });
+		expect(legacy.continuous?.studyMode).toBe('card');
+	});
+});
+
 describe('results and OCR schema', () => {
 	it('accepts manual words without a photo source', () => {
 		expect(WordSchema.parse({ ...words[0], sourceImageId: null })).toHaveProperty(
 			'sourceImageId',
 			null
+		);
+	});
+
+	it('defaults legacy words to unstarred and keeps the newest completed result per word', () => {
+		const legacyWord = { ...words[0] };
+		Reflect.deleteProperty(legacyWord, 'starred');
+		expect(WordSchema.parse(legacyWord).starred).toBe(false);
+
+		const first = createTestSession(
+			[words[0]],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean'
+		);
+		first.completedAt = '2026-01-01T00:00:00.000Z';
+		first.items[0].result = 'wrong';
+		const second = createTestSession(
+			[words[1]],
+			{ start: 2, end: 2 },
+			'sequential',
+			'english-to-korean'
+		);
+		second.completedAt = '2026-01-02T00:00:00.000Z';
+		second.items[0].result = 'correct';
+
+		expect(latestCompletedResults({ tests: [first, second] })).toEqual(
+			new Map([
+				[words[1].id, 'correct'],
+				[words[0].id, 'wrong']
+			])
 		);
 	});
 

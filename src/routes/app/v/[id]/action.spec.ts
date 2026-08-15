@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { createTestSession, type Word } from '$lib/domain';
 import {
 	createVocabulary,
 	getVocabulary,
@@ -11,7 +12,7 @@ import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { actions } from './+page.server';
+import { actions, load } from './+page.server';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -203,12 +204,19 @@ describe('vocabulary upload action', () => {
 
 		for (const testCase of cases) {
 			const vocabulary = await createVocabulary(userId, testCase.name, '');
+			const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 			vi.spyOn(ocrProvider, 'extract').mockImplementation(async () => {
 				if (testCase.error) throw testCase.error;
 				return testCase.response!;
 			});
 			const result = await upload(vocabulary.id, [await imageFile()]);
 			expect(result).toMatchObject({ status: testCase.error ? 502 : 422 });
+			if (!testCase.error)
+				expect(errors).toHaveBeenCalledWith('Upload produced no storable words:', {
+					vocabularyId: vocabulary.id,
+					imageCount: 1,
+					ocrEntryCounts: [testCase.response!.entries.length]
+				});
 			expect(await getVocabulary(userId, vocabulary.id)).toMatchObject({ words: [], images: [] });
 			vi.restoreAllMocks();
 		}
@@ -216,6 +224,7 @@ describe('vocabulary upload action', () => {
 
 	it('stores nothing when one image in a batch fails OCR', async () => {
 		const vocabulary = await createVocabulary(userId, '부분 실패', '');
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		let call = 0;
 		vi.spyOn(ocrProvider, 'extract').mockImplementation(async () => {
 			if (++call === 2) throw new Error('second image failed');
@@ -225,20 +234,57 @@ describe('vocabulary upload action', () => {
 		expect(
 			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')])
 		).toMatchObject({ status: 502 });
+		expect(errors).toHaveBeenCalledWith(
+			'Upload OCR failed:',
+			{
+				vocabularyId: vocabulary.id,
+				imageCount: 2,
+				totalBytes: expect.any(Number)
+			},
+			expect.objectContaining({ message: 'second image failed' })
+		);
 		expect(await getVocabulary(userId, vocabulary.id)).toMatchObject({ words: [], images: [] });
 		await expect(readdir(uploadDirectory(userId, vocabulary.id))).rejects.toMatchObject({
 			code: 'ENOENT'
 		});
 	});
 
+	it('logs image normalization failures with request context', async () => {
+		const vocabulary = await createVocabulary(userId, '정규화 실패', '');
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const file = new File([Uint8Array.from([1, 2, 3])], 'bad.png', { type: 'image/png' });
+
+		const result = await upload(vocabulary.id, [file]);
+
+		expect(result).toMatchObject({ status: 400 });
+		expect(errors).toHaveBeenCalledWith(
+			'Upload image normalization failed:',
+			{
+				vocabularyId: vocabulary.id,
+				images: [{ name: 'bad.png', size: 3, type: 'image/png' }]
+			},
+			expect.objectContaining({ name: 'Error' })
+		);
+	});
+
 	it('rolls back written images when metadata save fails', async () => {
 		const vocabularyId = crypto.randomUUID();
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		vi.spyOn(ocrProvider, 'extract').mockResolvedValue(
 			response([{ sourceOrder: 1, english: 'word', meaning: '뜻' }])
 		);
 		const result = await upload(vocabularyId, [await imageFile()]);
 
 		expect(result).toMatchObject({ status: 500 });
+		expect(errors).toHaveBeenCalledWith(
+			'Upload save failed:',
+			{
+				vocabularyId,
+				imageCount: 1,
+				writtenCount: 1
+			},
+			expect.objectContaining({ message: '단어장을 찾을 수 없습니다.' })
+		);
 		await expect(readdir(uploadDirectory(userId, vocabularyId))).resolves.toEqual([]);
 	});
 
@@ -253,7 +299,15 @@ describe('vocabulary upload action', () => {
 		const result = await upload(vocabularyId, [await imageFile()]);
 
 		expect(result).toMatchObject({ status: 500 });
-		expect(errors).toHaveBeenCalledWith('Upload save failed:', '단어장을 찾을 수 없습니다.');
+		expect(errors).toHaveBeenCalledWith(
+			'Upload save failed:',
+			{
+				vocabularyId,
+				imageCount: 1,
+				writtenCount: 1
+			},
+			expect.objectContaining({ message: '단어장을 찾을 수 없습니다.' })
+		);
 		expect(await readdir(uploadDirectory(userId, vocabularyId))).toHaveLength(1);
 	});
 });
@@ -270,6 +324,7 @@ describe('vocabulary word actions', () => {
 				meaning: `뜻-${number}`,
 				sourceImageId: null,
 				uncertain: false,
+				starred: false,
 				createdAt: now,
 				updatedAt: now
 			}));
@@ -322,5 +377,274 @@ describe('vocabulary word actions', () => {
 		expect((await getVocabulary(userId, vocabulary.id))!.words[0]).not.toHaveProperty(
 			'partOfSpeech'
 		);
+	});
+
+	it('validates and persists per-word stars', async () => {
+		const vocabulary = await createVocabulary(userId, '별표', '');
+		const add = new FormData();
+		add.set('english', 'remember');
+		add.set('meaning', '기억하다');
+		await actions.addWord!({
+			request: new Request('http://localhost', { method: 'POST', body: add }),
+			locals: { userId },
+			params: { id: vocabulary.id }
+		} as never);
+		const word = (await getVocabulary(userId, vocabulary.id))!.words[0];
+
+		const invalid = new FormData();
+		invalid.set('wordId', 'not-a-uuid');
+		expect(
+			await actions.toggleStar!({
+				request: new Request('http://localhost', { method: 'POST', body: invalid }),
+				locals: { userId },
+				params: { id: vocabulary.id }
+			} as never)
+		).toMatchObject({ status: 400 });
+
+		const toggle = new FormData();
+		toggle.set('wordId', word.id);
+		expect(
+			await actions.toggleStar!({
+				request: new Request('http://localhost', { method: 'POST', body: toggle }),
+				locals: { userId },
+				params: { id: vocabulary.id }
+			} as never)
+		).toMatchObject({ success: true });
+		expect((await getVocabulary(userId, vocabulary.id))!.words[0].starred).toBe(true);
+		await actions.toggleStar!({
+			request: new Request('http://localhost', { method: 'POST', body: toggle }),
+			locals: { userId },
+			params: { id: vocabulary.id }
+		} as never);
+		expect((await getVocabulary(userId, vocabulary.id))!.words[0].starred).toBe(false);
+	});
+});
+
+describe('test start action', () => {
+	async function completedVocabulary() {
+		const vocabulary = await createVocabulary(userId, '최근 결과 테스트', '');
+		const now = new Date().toISOString();
+		const words: Word[] = [1, 2, 3, 4].map((number) => ({
+			id: crypto.randomUUID(),
+			number,
+			english: `word-${number}`,
+			meaning: `뜻-${number}`,
+			sourceImageId: null,
+			uncertain: false,
+			starred: false,
+			createdAt: now,
+			updatedAt: now
+		}));
+		const completed = createTestSession(
+			words,
+			{ start: 1, end: 4 },
+			'sequential',
+			'english-to-korean'
+		);
+		completed.completedAt = now;
+		(['correct', 'wrong', 'correct', 'ambiguous'] as const).forEach(
+			(result, index) => (completed.items[index].result = result)
+		);
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words,
+			tests: [completed]
+		}));
+		return { vocabulary, words };
+	}
+
+	async function start(vocabularyId: string, form: FormData) {
+		return actions.startTest!({
+			request: new Request('http://localhost', { method: 'POST', body: form }),
+			locals: { userId },
+			params: { id: vocabularyId }
+		} as never);
+	}
+
+	it('rejects recent-result requests without a completed result or statuses', async () => {
+		const empty = await createVocabulary(userId, '결과 없음', '');
+		const noResult = new FormData();
+		noResult.set('source', 'recent-result');
+		noResult.append('statuses', 'wrong');
+		expect(await start(empty.id, noResult)).toHaveProperty(
+			'data.message',
+			'완료된 테스트 결과가 없습니다.'
+		);
+
+		const { vocabulary } = await completedVocabulary();
+		const noStatuses = new FormData();
+		noStatuses.set('source', 'recent-result');
+		expect(await start(vocabulary.id, noStatuses)).toHaveProperty(
+			'data.message',
+			'결과 상태를 하나 이상 선택해 주세요.'
+		);
+
+		const noMatch = new FormData();
+		noMatch.set('source', 'recent-result');
+		noMatch.append('statuses', 'unknown');
+		expect(await start(vocabulary.id, noMatch)).toHaveProperty(
+			'data.message',
+			'선택한 결과의 단어가 없습니다.'
+		);
+	});
+
+	it('validates statuses and recomputes multiple selected results in master order', async () => {
+		const { vocabulary, words } = await completedVocabulary();
+		const invalid = new FormData();
+		invalid.set('source', 'recent-result');
+		invalid.append('statuses', 'not-a-status');
+		expect(await start(vocabulary.id, invalid)).toHaveProperty(
+			'data.message',
+			'결과 상태를 확인해 주세요.'
+		);
+
+		const form = new FormData();
+		form.set('source', 'recent-result');
+		form.append('statuses', 'wrong');
+		form.append('statuses', 'ambiguous');
+		form.append('wordIds', words[0].id);
+		await expect(start(vocabulary.id, form)).rejects.toMatchObject({ status: 303 });
+
+		const saved = await getVocabulary(userId, vocabulary.id);
+		const created = saved!.tests.at(-1)!;
+		expect(created.items.map(({ wordId }) => wordId)).toEqual([words[1].id, words[3].id]);
+		expect(created.range).toEqual({ start: 2, end: 4 });
+	});
+
+	it('keeps results and recent-result selection across disjoint completed tests', async () => {
+		const vocabulary = await createVocabulary(userId, '분리된 결과', '');
+		const words: Word[] = Array.from({ length: 80 }, (_, index) => ({
+			id: crypto.randomUUID(),
+			number: index + 1,
+			english: `word-${index + 1}`,
+			meaning: `뜻-${index + 1}`,
+			sourceImageId: null,
+			uncertain: false,
+			starred: false,
+			createdAt: '2026-01-01T00:00:00.000Z',
+			updatedAt: '2026-01-01T00:00:00.000Z'
+		}));
+		const first = createTestSession(
+			words.slice(0, 40),
+			{ start: 1, end: 40 },
+			'sequential',
+			'english-to-korean'
+		);
+		first.completedAt = '2026-01-01T00:00:00.000Z';
+		for (const item of first.items) item.result = 'wrong';
+		const second = createTestSession(
+			words.slice(40),
+			{ start: 41, end: 80 },
+			'sequential',
+			'english-to-korean'
+		);
+		second.completedAt = '2026-01-02T00:00:00.000Z';
+		for (const item of second.items) item.result = 'correct';
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words,
+			tests: [first, second]
+		}));
+
+		const page = (await load!({
+			locals: { userId },
+			params: { id: vocabulary.id }
+		} as never))!;
+		expect(page.latestResult).toMatchObject({
+			summary: { correct: 40, tested: 80, total: 80 },
+			results: { [words[0].id]: 'wrong', [words[79].id]: 'correct' }
+		});
+		expect((await getVocabulary(userId, vocabulary.id))?.tests.map(({ id }) => id)).toEqual([
+			first.id,
+			second.id
+		]);
+
+		const form = new FormData();
+		form.set('source', 'recent-result');
+		form.set('statuses', 'wrong');
+		await expect(start(vocabulary.id, form)).rejects.toMatchObject({ status: 303 });
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.tests).toHaveLength(3);
+		expect(saved?.tests.at(-1)?.items.map(({ wordId }) => wordId)).toEqual(
+			words.slice(0, 40).map(({ id }) => id)
+		);
+	});
+
+	it('starts a test with starred words only', async () => {
+		const vocabulary = await createVocabulary(userId, '별표 테스트', '');
+		const now = new Date().toISOString();
+		const words: Word[] = [1, 2, 3].map((number) => ({
+			id: crypto.randomUUID(),
+			number,
+			english: `word-${number}`,
+			meaning: `뜻-${number}`,
+			sourceImageId: null,
+			uncertain: false,
+			starred: number !== 2,
+			createdAt: now,
+			updatedAt: now
+		}));
+		await updateVocabulary(userId, vocabulary.id, (current) => ({ ...current, words }));
+
+		const form = new FormData();
+		form.set('source', 'starred');
+		await expect(start(vocabulary.id, form)).rejects.toMatchObject({ status: 303 });
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.tests.at(-1)?.items.map(({ wordId }) => wordId)).toEqual([
+			words[0].id,
+			words[2].id
+		]);
+	});
+});
+
+describe('continuous learning actions', () => {
+	it('clears only continuous metadata while preserving test history', async () => {
+		const vocabulary = await createVocabulary(userId, '연속 취소', '');
+		const now = new Date().toISOString();
+		const words: Word[] = [1, 2].map((number) => ({
+			id: crypto.randomUUID(),
+			number,
+			english: `word-${number}`,
+			meaning: `뜻-${number}`,
+			sourceImageId: null,
+			uncertain: false,
+			starred: false,
+			createdAt: now,
+			updatedAt: now
+		}));
+		const normal = createTestSession(
+			words,
+			{ start: 1, end: 2 },
+			'sequential',
+			'english-to-korean'
+		);
+		normal.items[0].result = 'wrong';
+		const continuous = createTestSession(
+			[words[0]],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean',
+			Math.random,
+			{ phase: 'batch', batchSize: 1, daySize: 2, dayStart: 1, dayEnd: 2, studyMode: 'card' }
+		);
+		continuous.items[0].result = 'correct';
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words,
+			tests: [normal, continuous]
+		}));
+
+		expect(
+			await actions.cancelContinuous!({
+				request: new Request('http://localhost', { method: 'POST' }),
+				locals: { userId },
+				params: { id: vocabulary.id }
+			} as never)
+		).toMatchObject({ success: true });
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.tests).toHaveLength(2);
+		expect(saved?.tests[0].items[0].result).toBe('wrong');
+		expect(saved?.tests[1].items[0].result).toBe('correct');
+		expect(saved?.tests.every((test) => !test.continuous)).toBe(true);
 	});
 });
