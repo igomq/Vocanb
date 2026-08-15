@@ -13,15 +13,13 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const vocabulary = await getVocabulary(locals.userId!, params.id);
 	const test = vocabulary?.tests.find((candidate) => candidate.id === params.testId);
 	if (!vocabulary || !test) redirect(303, `/app/v/${params.id}`);
+	const starsByWordId = new Map(vocabulary.words.map((word) => [word.id, word.starred]));
 	return {
 		title: vocabulary.title,
 		rangeLabel: vocabulary.rangeLabel,
 		test,
 		stars: Object.fromEntries(
-			test.items.map((item) => [
-				item.wordId,
-				vocabulary.words.find((word) => word.id === item.wordId)?.starred ?? false
-			])
+			test.items.map((item) => [item.wordId, starsByWordId.get(item.wordId) ?? false])
 		),
 		summary: summarizeTest(test, vocabulary.words.length)
 	};
