@@ -128,6 +128,14 @@ export const actions: Actions = {
 		try {
 			normalized = await mapWithConcurrency(files, 2, normalizeUpload);
 		} catch (error) {
+			console.error(
+				'Upload image normalization failed:',
+				{
+					vocabularyId: params.id,
+					images: files.map(({ name, size, type }) => ({ name, size, type }))
+				},
+				error
+			);
 			return fail(400, {
 				action: 'upload',
 				message: error instanceof Error ? error.message : '이미지를 읽을 수 없습니다.'
@@ -140,7 +148,15 @@ export const actions: Actions = {
 				ocrProvider.extract(bytes, targetWordCounts?.[index])
 			);
 		} catch (error) {
-			console.error('OCR failed:', error instanceof Error ? error.message : 'unknown error');
+			console.error(
+				'Upload OCR failed:',
+				{
+					vocabularyId: params.id,
+					imageCount: files.length,
+					totalBytes: files.reduce((total, file) => total + file.size, 0)
+				},
+				error
+			);
 			return fail(502, {
 				action: 'upload',
 				message: '단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.'
@@ -180,8 +196,14 @@ export const actions: Actions = {
 				})
 			});
 		}
-		if (!prepared.length)
+		if (!prepared.length) {
+			console.error('Upload produced no storable words:', {
+				vocabularyId: params.id,
+				imageCount: files.length,
+				ocrEntryCounts: results.map((result) => result.entries.length)
+			});
 			return fail(422, { action: 'upload', message: '사진에서 저장할 단어를 찾지 못했습니다.' });
+		}
 
 		const written: string[] = [];
 		try {
@@ -216,7 +238,12 @@ export const actions: Actions = {
 			}
 			console.error(
 				'Upload save failed:',
-				error instanceof Error ? error.message : 'unknown error'
+				{
+					vocabularyId: params.id,
+					imageCount: files.length,
+					writtenCount: written.length
+				},
+				error
 			);
 			return fail(500, {
 				action: 'upload',

@@ -204,12 +204,19 @@ describe('vocabulary upload action', () => {
 
 		for (const testCase of cases) {
 			const vocabulary = await createVocabulary(userId, testCase.name, '');
+			const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 			vi.spyOn(ocrProvider, 'extract').mockImplementation(async () => {
 				if (testCase.error) throw testCase.error;
 				return testCase.response!;
 			});
 			const result = await upload(vocabulary.id, [await imageFile()]);
 			expect(result).toMatchObject({ status: testCase.error ? 502 : 422 });
+			if (!testCase.error)
+				expect(errors).toHaveBeenCalledWith('Upload produced no storable words:', {
+					vocabularyId: vocabulary.id,
+					imageCount: 1,
+					ocrEntryCounts: [testCase.response!.entries.length]
+				});
 			expect(await getVocabulary(userId, vocabulary.id)).toMatchObject({ words: [], images: [] });
 			vi.restoreAllMocks();
 		}
@@ -217,6 +224,7 @@ describe('vocabulary upload action', () => {
 
 	it('stores nothing when one image in a batch fails OCR', async () => {
 		const vocabulary = await createVocabulary(userId, '부분 실패', '');
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		let call = 0;
 		vi.spyOn(ocrProvider, 'extract').mockImplementation(async () => {
 			if (++call === 2) throw new Error('second image failed');
@@ -226,20 +234,57 @@ describe('vocabulary upload action', () => {
 		expect(
 			await upload(vocabulary.id, [await imageFile('one.png'), await imageFile('two.png')])
 		).toMatchObject({ status: 502 });
+		expect(errors).toHaveBeenCalledWith(
+			'Upload OCR failed:',
+			{
+				vocabularyId: vocabulary.id,
+				imageCount: 2,
+				totalBytes: expect.any(Number)
+			},
+			expect.objectContaining({ message: 'second image failed' })
+		);
 		expect(await getVocabulary(userId, vocabulary.id)).toMatchObject({ words: [], images: [] });
 		await expect(readdir(uploadDirectory(userId, vocabulary.id))).rejects.toMatchObject({
 			code: 'ENOENT'
 		});
 	});
 
+	it('logs image normalization failures with request context', async () => {
+		const vocabulary = await createVocabulary(userId, '정규화 실패', '');
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const file = new File([Uint8Array.from([1, 2, 3])], 'bad.png', { type: 'image/png' });
+
+		const result = await upload(vocabulary.id, [file]);
+
+		expect(result).toMatchObject({ status: 400 });
+		expect(errors).toHaveBeenCalledWith(
+			'Upload image normalization failed:',
+			{
+				vocabularyId: vocabulary.id,
+				images: [{ name: 'bad.png', size: 3, type: 'image/png' }]
+			},
+			expect.objectContaining({ name: 'Error' })
+		);
+	});
+
 	it('rolls back written images when metadata save fails', async () => {
 		const vocabularyId = crypto.randomUUID();
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		vi.spyOn(ocrProvider, 'extract').mockResolvedValue(
 			response([{ sourceOrder: 1, english: 'word', meaning: '뜻' }])
 		);
 		const result = await upload(vocabularyId, [await imageFile()]);
 
 		expect(result).toMatchObject({ status: 500 });
+		expect(errors).toHaveBeenCalledWith(
+			'Upload save failed:',
+			{
+				vocabularyId,
+				imageCount: 1,
+				writtenCount: 1
+			},
+			expect.objectContaining({ message: '단어장을 찾을 수 없습니다.' })
+		);
 		await expect(readdir(uploadDirectory(userId, vocabularyId))).resolves.toEqual([]);
 	});
 
@@ -254,7 +299,15 @@ describe('vocabulary upload action', () => {
 		const result = await upload(vocabularyId, [await imageFile()]);
 
 		expect(result).toMatchObject({ status: 500 });
-		expect(errors).toHaveBeenCalledWith('Upload save failed:', '단어장을 찾을 수 없습니다.');
+		expect(errors).toHaveBeenCalledWith(
+			'Upload save failed:',
+			{
+				vocabularyId,
+				imageCount: 1,
+				writtenCount: 1
+			},
+			expect.objectContaining({ message: '단어장을 찾을 수 없습니다.' })
+		);
 		expect(await readdir(uploadDirectory(userId, vocabularyId))).toHaveLength(1);
 	});
 });
