@@ -10,6 +10,7 @@ import { getVertexConfig } from './config';
 
 const DICTIONARY_URL = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
 export const MAX_PRONUNCIATION_WORDS = 32;
+const VERTEX_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_GUIDE_INPUT_LENGTH = 300;
 const MAX_GUIDE_IPA_LENGTH = 100;
 
@@ -68,6 +69,19 @@ function buildPronunciationGuideInstruction(inputs: readonly PronunciationGuideI
 ${JSON.stringify(inputs.map(({ id, english, ipa }) => ({ id, english, ipa })))}`;
 }
 
+function retryableVertexError(error: unknown) {
+	const status = Number(
+		(error as { status?: number; code?: number }).status || (error as { code?: number }).code
+	);
+	const name = (error as { name?: string }).name;
+	return (
+		status === 429 ||
+		(status >= 500 && status < 600) ||
+		name === 'AbortError' ||
+		name === 'TimeoutError'
+	);
+}
+
 export function parsePronunciationGuides(
 	payload: unknown,
 	candidates: readonly PronunciationGuideInput[]
@@ -118,25 +132,36 @@ export async function generateKoreanPronunciationGuides(
 	if (candidates.length > MAX_PRONUNCIATION_WORDS) throw new Error('발음 요청이 너무 큽니다.');
 	const { project, location, model } = getVertexConfig();
 	const client = new GoogleGenAI({ vertexai: true, project, location });
-	const response = await client.models.generateContent({
-		model,
-		contents: [
-			{
-				role: 'user',
-				parts: [{ text: buildPronunciationGuideInstruction(candidates) }]
-			}
-		],
-		config: {
-			systemInstruction: PRONUNCIATION_GUIDE_SYSTEM_INSTRUCTION,
-			thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-			responseMimeType: 'application/json',
-			responseJsonSchema: PRONUNCIATION_GUIDE_JSON_SCHEMA,
-			temperature: 0.1
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		try {
+			const response = await client.models.generateContent({
+				model,
+				contents: [
+					{
+						role: 'user',
+						parts: [{ text: buildPronunciationGuideInstruction(candidates) }]
+					}
+				],
+				config: {
+					systemInstruction: PRONUNCIATION_GUIDE_SYSTEM_INSTRUCTION,
+					thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+					responseMimeType: 'application/json',
+					responseJsonSchema: PRONUNCIATION_GUIDE_JSON_SCHEMA,
+					temperature: 0.1,
+					abortSignal: AbortSignal.timeout(VERTEX_REQUEST_TIMEOUT_MS)
+				}
+			});
+			const guides = parsePronunciationGuideText(response.text, candidates);
+			if (!guides) throw new Error('발음 안내 응답을 확인할 수 없습니다.');
+			return guides;
+		} catch (error) {
+			lastError = error;
+			if (!retryableVertexError(error) || attempt === 2) break;
+			await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
 		}
-	});
-	const guides = parsePronunciationGuideText(response.text, candidates);
-	if (!guides) throw new Error('발음 안내 응답을 확인할 수 없습니다.');
-	return guides;
+	}
+	throw new Error('발음 안내 응답을 확인할 수 없습니다.', { cause: lastError });
 }
 const TOKEN_ORDER = [
 	'tʃ',

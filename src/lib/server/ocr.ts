@@ -3,6 +3,8 @@ import { GoogleGenAI, MediaResolution, ThinkingLevel, createPartFromBase64 } fro
 import { getVertexConfig } from './config';
 import { OCR_JSON_SCHEMA, OCR_SYSTEM_INSTRUCTION, buildOcrUserInstruction } from './ocr-prompt';
 
+export const VERTEX_REQUEST_TIMEOUT_MS = 30_000;
+
 export interface OcrProvider {
 	extract(image: Buffer, targetEntries?: number): Promise<OcrResponse>;
 }
@@ -42,7 +44,13 @@ function retryable(error: unknown) {
 	const status = Number(
 		(error as { status?: number; code?: number }).status || (error as { code?: number }).code
 	);
-	return status === 429 || (status >= 500 && status < 600);
+	const name = (error as { name?: string }).name;
+	return (
+		status === 429 ||
+		(status >= 500 && status < 600) ||
+		name === 'AbortError' ||
+		name === 'TimeoutError'
+	);
 }
 
 export class VertexOcrProvider implements OcrProvider {
@@ -69,7 +77,8 @@ export class VertexOcrProvider implements OcrProvider {
 						mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
 						responseMimeType: 'application/json',
 						responseJsonSchema: OCR_JSON_SCHEMA,
-						temperature: 0.1
+						temperature: 0.1,
+						abortSignal: AbortSignal.timeout(VERTEX_REQUEST_TIMEOUT_MS)
 					}
 				});
 				if (!response.text) throw new Error('OCR 응답이 비어 있습니다.');

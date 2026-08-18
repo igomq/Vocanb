@@ -7,6 +7,7 @@ import {
 	type PronunciationLookup
 } from '$lib/server/pronunciation';
 import { needsPronunciationGuideRefresh, type Pronunciation } from '$lib/domain';
+import { mapWithConcurrency } from '$lib/server/ocr';
 import { getVocabulary, updateVocabulary } from '$lib/server/storage';
 import { json } from '@sveltejs/kit';
 
@@ -42,17 +43,24 @@ export const POST = async ({ request, locals, params }) => {
 		const key = word.english.trim().toLowerCase();
 		missingByEnglish.set(key, [...(missingByEnglish.get(key) ?? []), word]);
 	}
-	for (const duplicates of missingByEnglish.values()) {
-		let result: Pronunciation | null | undefined;
-		try {
-			result = await lookupPronunciation(duplicates[0].english);
-		} catch (error) {
-			console.warn(
-				'Pronunciation lookup failed:',
-				duplicates[0].english,
-				error instanceof Error ? error.message : 'unknown error'
-			);
+	const lookupResults = await mapWithConcurrency(
+		[...missingByEnglish.values()],
+		8,
+		async (duplicates) => {
+			let result: Pronunciation | null | undefined;
+			try {
+				result = await lookupPronunciation(duplicates[0].english);
+			} catch (error) {
+				console.warn(
+					'Pronunciation lookup failed:',
+					duplicates[0].english,
+					error instanceof Error ? error.message : 'unknown error'
+				);
+			}
+			return { duplicates, result };
 		}
+	);
+	for (const { duplicates, result } of lookupResults) {
 		for (const word of duplicates) dictionaryResults.set(word.id, result);
 	}
 

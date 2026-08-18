@@ -1,5 +1,6 @@
 import {
 	clearLoginFailures,
+	isAppPath,
 	loginAllowed,
 	recordLoginFailure,
 	setSession,
@@ -12,7 +13,7 @@ import type { Actions, PageServerLoad } from './$types';
 export const load: PageServerLoad = ({ locals, url }) => {
 	if (locals.userId) redirect(303, '/app');
 	return {
-		next: url.searchParams.get('next')?.startsWith('/app') ? url.searchParams.get('next') : '/app'
+		next: isAppPath(url.searchParams.get('next')) ? url.searchParams.get('next') : '/app'
 	};
 };
 
@@ -32,6 +33,6 @@ export const actions: Actions = {
 		}
 		clearLoginFailures(key);
 		setSession(cookies, config.userId);
-		redirect(303, next.startsWith('/app') ? next : '/app');
+		redirect(303, isAppPath(next) ? next : '/app');
 	}
 };

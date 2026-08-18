@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { getDataDir } from './config';
 
 const SAFE_ID = /^(?:u_[0-9a-f]{32}|[0-9a-f-]{36})$/;
+export const MAX_TEST_HISTORY = 500;
 // ponytail: in-process locks assume one Node instance; use a shared store before horizontal scaling.
 const locks = new Map<string, Promise<void>>();
 
@@ -154,8 +155,11 @@ export async function updateVocabulary(
 	return withLock(path, async () => {
 		const current = await getVocabulary(userId, vocabularyId);
 		if (!current) throw new Error('단어장을 찾을 수 없습니다.');
+		const updated = await update(structuredClone(current));
 		const next = VocabularySchema.parse({
-			...(await update(structuredClone(current))),
+			...updated,
+			// ponytail: keep the newest 500 sessions; split test history when retention becomes a requirement.
+			tests: updated.tests.slice(-MAX_TEST_HISTORY),
 			id: current.id,
 			createdAt: current.createdAt,
 			updatedAt: new Date().toISOString()

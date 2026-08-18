@@ -4,6 +4,10 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import StudyMode from '$lib/components/StudyMode.svelte';
+	import TestSettingsDialog from '$lib/components/TestSettingsDialog.svelte';
+	import UploadDialog from '$lib/components/UploadDialog.svelte';
+	import WordList from '$lib/components/WordList.svelte';
 	import {
 		CONTINUOUS_BATCH_SIZE_DEFAULT,
 		CONTINUOUS_BATCH_SIZE_MAX,
@@ -55,8 +59,7 @@
 				width = Math.max(1, Math.round(width * 0.8));
 				height = Math.max(1, Math.round(height * 0.8));
 			}
-			if (!blob) return file;
-			if (blob.size >= file.size) return file;
+			if (!blob || blob.size >= file.size) return file;
 			return new File([blob], file.name.replace(/\.[^.]+$/u, '') + '.jpg', {
 				type: 'image/jpeg',
 				lastModified: file.lastModified
@@ -74,26 +77,35 @@
 	let testAll = $state(true);
 	let testSource = $state<'range' | 'recent-result' | 'starred'>('range');
 	let testStatuses = new SvelteSet<ResultStatus>();
-	let testDialog: HTMLDialogElement | undefined = $state();
+	let testDialog:
+		| {
+				open: (
+					range?: { start: number; end: number },
+					continuous?: ContinuousLearningProgress,
+					source?: 'range' | 'starred'
+				) => void;
+				close: () => void;
+		  }
+		| undefined = $state();
 	let continuousSettingsDialog: HTMLDialogElement | undefined = $state();
 	let wordDialog: HTMLDialogElement | undefined = $state();
 	let leaveDialog: HTMLDialogElement | undefined = $state();
 	let uploadSettingsDialog: HTMLDialogElement | undefined = $state();
 	let uploadDialog: HTMLDialogElement | undefined = $state();
 	let photoInput: HTMLInputElement | undefined = $state();
+	let uploadPending = $state(false);
+	let uploadError = $state('');
 	let uploadFiles = $state<File[]>([]);
 	let uploadMode = $state<'all' | 'targets'>('all');
 	let uploadTargets = $state<(number | undefined)[]>([]);
-	let editingWord = $state<Word | null>(null);
-	let editEnglish = $state('');
-	let editMeaning = $state('');
-	let editPartOfSpeech = $state('');
-	let uploadPending = $state(false);
-	let uploadError = $state('');
 	let uploadFileCount = $state(0);
 	let uploadStatus = $state('');
 	let uploadProgress = $state<number | undefined>();
 	let uploadProgressMax = $state(1);
+	let editingWord = $state<Word | null>(null);
+	let editEnglish = $state('');
+	let editMeaning = $state('');
+	let editPartOfSpeech = $state('');
 	let startPending = $state(false);
 	let testStart = $state(1);
 	let testEnd = $state(1);
@@ -156,18 +168,6 @@
 				(studyAll || (word.number >= studyStart && word.number <= studyEnd))
 		)
 	);
-	let studyPage = $derived(Math.floor(studyIndex / studyPageSize));
-	let studyPageWords = $derived(
-		studyWords.slice(studyPage * studyPageSize, studyPage * studyPageSize + studyPageSize)
-	);
-	let studyPageCount = $derived(Math.max(1, Math.ceil(studyWords.length / studyPageSize)));
-	let studyCurrentWord = $derived(studyWords[studyIndex]);
-	let studyHasPrevious = $derived(studyIndex > 0);
-	let studyHasNext = $derived(
-		studyMode === 'card'
-			? studyIndex < studyWords.length - 1
-			: studyIndex + studyPageSize < studyWords.length
-	);
 	let pronunciationRequestKey = $derived(
 		JSON.stringify(
 			data.vocabulary.words
@@ -185,10 +185,6 @@
 		return data.latestResult?.results[wordId] as ResultStatus | undefined;
 	}
 
-	function statusLabel(status: ResultStatus) {
-		return { correct: '맞음', wrong: '틀림', unknown: '아예 몰랐음', ambiguous: '애매함' }[status];
-	}
-
 	function closeLeaveDialog() {
 		if (leaveDialog?.open) leaveDialog.close();
 	}
@@ -199,19 +195,11 @@
 		source: 'range' | 'starred' = 'range'
 	) {
 		if (!data.vocabulary.words.length || !testDialog) return;
-		const first = data.vocabulary.words[0].number;
-		const last = data.vocabulary.words.at(-1)!.number;
-		testStart = range?.start ?? first;
-		testEnd = range?.end ?? last;
-		testAll = !range;
-		testSource = source;
-		testStatuses.clear();
-		testContinuousStep = continuous ?? null;
-		testDialog.showModal();
+		testDialog.open(range, continuous, source);
 	}
 
 	function closeTestSettings() {
-		if (testDialog?.open) testDialog.close();
+		testDialog?.close();
 	}
 
 	function openStudySettings() {
@@ -557,30 +545,19 @@
 		for (const file of prepared) formData.append('images', file);
 		uploadStatus = `${files.length}장의 사진에서 단어를 읽고 저장하는 중`;
 		uploadProgress = undefined;
-		let cleaned = false;
-		const cleanup = (close: boolean) => {
-			if (cleaned) return;
-			cleaned = true;
-			uploadPending = false;
-			if (close && uploadDialog?.open) uploadDialog.close();
-			if (close) resetUploadSelection();
-		};
 		controller.signal.addEventListener(
 			'abort',
 			() => {
 				uploadError =
 					'페이지 이동 요청으로 분석 연결이 중단되었습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
-				cleanup(false);
+				uploadPending = false;
 			},
 			{ once: true }
 		);
 		return async ({ update, result }) => {
 			try {
 				await update();
-				if (result.type !== 'success') {
-					cleanup(false);
-					return;
-				}
+				if (result.type !== 'success') return;
 				await tick();
 				const wordIds = pronunciationRequestWordIds;
 				if (wordIds.length) {
@@ -593,14 +570,14 @@
 					});
 					pronunciationRequestStarted = pronunciationRequestKey;
 				}
-				cleanup(true);
+				if (uploadDialog?.open) uploadDialog.close();
+				resetUploadSelection();
 			} catch (error) {
 				console.error('Upload result handling failed:', error);
 				uploadError =
 					'분석 결과를 확인하지 못했습니다. 서버에 저장됐을 수 있으니 잠시 후 목록을 새로고침해 주세요.';
-				cleanup(false);
 			} finally {
-				cleanup(false);
+				uploadPending = false;
 			}
 		};
 	};
@@ -723,178 +700,26 @@
 
 <div class="content-wrap">
 	{#if studyActive}
-		<header class="study-header">
-			<div>
-				<p class="eyebrow">
-					{continuousStep ? '연속 학습' : '암기 모드'} · {data.vocabulary.title}
-				</p>
-				<h1 id="study-title">{continuousStep ? '이번 묶음 암기' : '단어 암기'}</h1>
-				<p class="page-description">
-					{continuousStep
-						? `${continuousStep.range?.start}~${continuousStep.range?.end}번 묶음`
-						: studyStarredOnly
-							? studyAll
-								? '별표 단어'
-								: `${studyStart}~${studyEnd}번 별표 단어`
-							: studyAll
-								? '전체 단어'
-								: `${studyStart}~${studyEnd}번`} · {studyWords.length}개 · {studyMode === 'card'
-						? '카드'
-						: '목록'}
-				</p>
-			</div>
-		</header>
-
-		{#if studyMode === 'card'}
-			<section class="study-card-stage" aria-labelledby="study-title" aria-live="polite">
-				<button
-					class="study-nav"
-					type="button"
-					disabled={!studyHasPrevious}
-					aria-label="이전 단어"
-					onclick={previousStudy}
-				>
-					<span aria-hidden="true">‹</span><span class="study-nav-label">이전</span>
-				</button>
-				{#if studyCurrentWord}
-					{@const pronunciation = pronunciationFor(studyCurrentWord)}
-					<article class="study-card">
-						<div class="study-card-tools">
-							<span class="study-number">{studyCurrentWord.number}번</span>
-							<form method="post" action="?/toggleStar" use:enhance>
-								<input type="hidden" name="wordId" value={studyCurrentWord.id} />
-								<button
-									class="star-button"
-									type="submit"
-									aria-label={studyCurrentWord.starred
-										? `${studyCurrentWord.english} 별표 해제`
-										: `${studyCurrentWord.english} 별표`}
-									aria-pressed={studyCurrentWord.starred}
-								>
-									<span aria-hidden="true">{studyCurrentWord.starred ? '★' : '☆'}</span>
-								</button>
-							</form>
-						</div>
-						<div class="study-word-line">
-							<h2>{studyCurrentWord.english}</h2>
-							{#if pronunciation}<button
-									class:is-revealed={revealedPronunciation === studyCurrentWord.id}
-									class="pronunciation-trigger"
-									type="button"
-									aria-expanded={revealedPronunciation === studyCurrentWord.id}
-									aria-label={`${studyCurrentWord.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
-									onpointerenter={closePronunciation}
-									onfocus={closePronunciation}
-									onclick={() => togglePronunciation(studyCurrentWord.id)}
-								>
-									<span class="pronunciation-ipa">{pronunciation.ipa}</span>
-									<span class="pronunciation-guide" aria-hidden="true">{pronunciation.guide}</span>
-								</button>{/if}
-						</div>
-						{#if studyCurrentWord.partOfSpeech}<span class="part-of-speech study-part-of-speech"
-								>{studyCurrentWord.partOfSpeech}</span
-							>{/if}
-						<p class="study-meaning">{studyCurrentWord.meaning}</p>
-					</article>
-				{/if}
-				<button
-					class="study-nav"
-					type="button"
-					disabled={!studyHasNext}
-					aria-label="다음 단어"
-					onclick={nextStudy}
-				>
-					<span aria-hidden="true">›</span><span class="study-nav-label">다음</span>
-				</button>
-			</section>
-		{:else}
-			<section class="study-list-stage" aria-labelledby="study-title" aria-live="polite">
-				<button
-					class="study-nav"
-					type="button"
-					disabled={!studyHasPrevious}
-					aria-label="이전 단어 목록"
-					onclick={previousStudy}
-				>
-					<span aria-hidden="true">‹</span><span class="study-nav-label">이전</span>
-				</button>
-				<div class="study-word-list">
-					{#each studyPageWords as word (word.id)}
-						{@const pronunciation = pronunciationFor(word)}
-						<div class="study-word-row">
-							<span class="word-number">{word.number}</span>
-							<div class="word-cell-content study-word-cell">
-								<div class="study-word-line">
-									<span class="word-english">{word.english}</span>
-									{#if pronunciation}<button
-											class:is-revealed={revealedPronunciation === word.id}
-											class="pronunciation-trigger"
-											type="button"
-											aria-expanded={revealedPronunciation === word.id}
-											aria-label={`${word.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
-											onpointerenter={closePronunciation}
-											onfocus={closePronunciation}
-											onclick={() => togglePronunciation(word.id)}
-										>
-											<span class="pronunciation-ipa">{pronunciation.ipa}</span>
-											<span class="pronunciation-guide" aria-hidden="true"
-												>{pronunciation.guide}</span
-											>
-										</button>{/if}
-								</div>
-							</div>
-							<span class="word-meaning"
-								>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
-									>{/if}{word.meaning}</span
-							>
-							<form method="post" action="?/toggleStar" use:enhance>
-								<input type="hidden" name="wordId" value={word.id} />
-								<button
-									class="star-button"
-									type="submit"
-									aria-label={word.starred ? `${word.english} 별표 해제` : `${word.english} 별표`}
-									aria-pressed={word.starred}
-								>
-									<span aria-hidden="true">{word.starred ? '★' : '☆'}</span>
-								</button>
-							</form>
-						</div>
-					{/each}
-				</div>
-				<button
-					class="study-nav"
-					type="button"
-					disabled={!studyHasNext}
-					aria-label="다음 단어 목록"
-					onclick={nextStudy}
-				>
-					<span aria-hidden="true">›</span><span class="study-nav-label">다음</span>
-				</button>
-			</section>
-		{/if}
-
-		<p class="study-page-status" aria-live="polite">
-			{#if studyMode === 'card'}
-				{studyIndex + 1}/{studyWords.length}번
-			{:else}
-				{studyPage + 1}/{studyPageCount}쪽 · {studyPageWords.length}개
-			{/if}
-		</p>
-		<footer class="study-footer">
-			{#if !studyHasNext}<button
-					class="button button-secondary"
-					type="button"
-					onclick={testStudyRange}>이 범위 테스트하기</button
-				>{/if}
-			{#if continuousStep}<form
-					method="post"
-					action="?/cancelContinuous"
-					onsubmit={confirmCancelContinuous}
-				>
-					<button class="button button-danger" type="submit">연속 학습 취소</button>
-				</form>{/if}
-			<button class="button button-quiet" type="button" onclick={exitStudy}>돌아가기</button>
-		</footer>
+		<StudyMode
+			title={data.vocabulary.title}
+			words={studyWords}
+			{pronunciationFor}
+			{revealedPronunciation}
+			continuous={continuousStep}
+			starredOnly={studyStarredOnly}
+			all={studyAll}
+			start={studyStart}
+			end={studyEnd}
+			mode={studyMode}
+			index={studyIndex}
+			onprevious={previousStudy}
+			onnext={nextStudy}
+			ontogglePronunciation={togglePronunciation}
+			onclosePronunciation={closePronunciation}
+			ontest={testStudyRange}
+			onexit={exitStudy}
+			oncancelContinuous={confirmCancelContinuous}
+		/>
 	{:else}
 		<header class="page-header vocabulary-heading">
 			<div>
@@ -1141,89 +966,21 @@
 		{/if}
 
 		{#if filteredWords.length}
-			<form id="toggle-star-form" method="post" action="?/toggleStar" use:enhance></form>
-			<form
-				id="bulk-delete-form"
-				method="post"
-				action="?/deleteWords"
-				use:enhance={enhanceDeleteWords}
-				onsubmit={confirmDeleteWords}
-			>
-				<section class:word-list-selecting={selectionMode} class="word-list" aria-label="단어 목록">
-					{#each filteredWords as word (word.id)}
-						{@const status = statusFor(word.id)}
-						{@const pronunciation = pronunciationFor(word)}
-						<div class="word-row">
-							{#if selectionMode}<label class="word-select" aria-label={`${word.english} 선택`}>
-									<input
-										type="checkbox"
-										name="wordIds"
-										value={word.id}
-										form="bulk-delete-form"
-										checked={selectedWordIds.has(word.id)}
-										onchange={(event) => toggleWordSelection(event, word.id)}
-									/>
-								</label>{/if}
-							<span class="word-number">{word.number}</span>
-							<div class="word-cell-content">
-								<div class="word-word-line">
-									<span class="word-english">{word.english}</span>
-									{#if pronunciation}<button
-											class:is-revealed={revealedPronunciation === word.id}
-											class="pronunciation-trigger"
-											type="button"
-											aria-expanded={revealedPronunciation === word.id}
-											aria-label={`${word.english} 발음 ${pronunciation.ipa}, ${pronunciation.guide}`}
-											onpointerenter={closePronunciation}
-											onfocus={closePronunciation}
-											onclick={() => togglePronunciation(word.id)}
-										>
-											<span class="pronunciation-ipa">{pronunciation.ipa}</span>
-											<span class="pronunciation-guide" aria-hidden="true"
-												>{pronunciation.guide}</span
-											>
-										</button>{/if}
-								</div>
-								<div class="word-meta">
-									{#if imageNumberFor(word.sourceImageId)}<span class="word-source"
-											>사진 {imageNumberFor(word.sourceImageId)}</span
-										>{:else if word.sourceImageId === null}<span class="word-source is-manual"
-											>직접 입력</span
-										>{/if}
-									{#if word.uncertain}<span class="word-status status-ambiguous">확인 필요</span
-										>{/if}
-									{#if status}<span
-											class={`word-status status-${status}`}
-											title={`최근 결과: ${statusLabel(status)}`}>{statusLabel(status)}</span
-										>{/if}
-								</div>
-							</div>
-							<span class="word-meaning"
-								>{#if word.partOfSpeech}<span class="part-of-speech">{word.partOfSpeech}</span
-									>{/if}{word.meaning}</span
-							>
-							<button
-								class="star-button"
-								form="toggle-star-form"
-								name="wordId"
-								value={word.id}
-								type="submit"
-								aria-label={word.starred ? `${word.english} 별표 해제` : `${word.english} 별표`}
-								aria-pressed={word.starred}
-							>
-								<span aria-hidden="true">{word.starred ? '★' : '☆'}</span>
-							</button>
-							<button
-								class="word-edit"
-								type="button"
-								disabled={selectionMode}
-								onclick={() => openWordDialog(word)}
-								aria-label={`${word.english} 단어 편집`}>편집</button
-							>
-						</div>
-					{/each}
-				</section>
-			</form>
+			<WordList
+				words={filteredWords}
+				{selectionMode}
+				{selectedWordIds}
+				{revealedPronunciation}
+				{statusFor}
+				{pronunciationFor}
+				{imageNumberFor}
+				{enhanceDeleteWords}
+				{confirmDeleteWords}
+				ontoggleWordSelection={toggleWordSelection}
+				ontogglePronunciation={togglePronunciation}
+				onclosePronunciation={closePronunciation}
+				onedit={openWordDialog}
+			/>
 		{:else}
 			<section class="empty-state" aria-labelledby="words-empty-title">
 				<div class="empty-state-mark" aria-hidden="true">＋</div>
@@ -1251,283 +1008,41 @@
 	{/if}
 </div>
 
-<dialog
-	bind:this={uploadSettingsDialog}
-	class="modal"
-	aria-labelledby="upload-settings-title"
-	oncancel={closeUploadSettings}
->
-	<div class="modal-body">
-		<div class="modal-header">
-			<div>
-				<h2 id="upload-settings-title">사진 추가</h2>
-				<p>{uploadFileCount}장의 사진에서 단어를 추출합니다.</p>
-			</div>
-			<button
-				class="modal-close"
-				type="button"
-				aria-label="닫기"
-				title="닫기"
-				onclick={closeUploadSettings}>×</button
-			>
-		</div>
+<UploadDialog
+	bind:uploadSettingsDialog
+	bind:uploadDialog
+	{uploadFiles}
+	{uploadFileCount}
+	bind:uploadMode
+	bind:uploadTargets
+	{uploadPending}
+	{uploadError}
+	{uploadStatus}
+	{uploadProgress}
+	{uploadProgressMax}
+	formMessage={form?.message}
+	{closeUploadSettings}
+	{closeUploadResult}
+/>
 
-		<div class="form-stack">
-			<fieldset class="choice-group">
-				<legend>추출 방식</legend>
-				<label class="choice"
-					><input type="radio" bind:group={uploadMode} value="all" /> 사진에 보이는 주요 단어 전체 추출</label
-				>
-				<label class="choice"
-					><input type="radio" bind:group={uploadMode} value="targets" /> 사진별 목표 개수 지정</label
-				>
-			</fieldset>
-			{#if uploadMode === 'targets'}
-				<div class="form-stack">
-					{#each uploadFiles as file, index (file)}
-						<div class="field">
-							<label for={`upload-target-${index}`}>사진 {index + 1} 목표 개수 ({file.name})</label>
-							<input
-								id={`upload-target-${index}`}
-								name="targetWordCounts"
-								form="photo-upload-form"
-								type="number"
-								min="1"
-								max="500"
-								step="1"
-								inputmode="numeric"
-								required
-								bind:value={uploadTargets[index]}
-							/>
-						</div>
-					{/each}
-					<p class="field-note" aria-live="polite">
-						총 목표 개수: {uploadTargets.reduce(
-							(total, target) => (total ?? 0) + (target ?? 0),
-							0
-						)}개
-					</p>
-				</div>
-			{/if}
-			<div class="modal-actions">
-				<button class="button button-secondary" type="button" onclick={closeUploadSettings}
-					>취소</button
-				>
-				<button class="button button-primary" type="submit" form="photo-upload-form"
-					>사진 분석</button
-				>
-			</div>
-		</div>
-	</div>
-</dialog>
-
-<dialog
-	bind:this={uploadDialog}
-	class="modal"
-	aria-labelledby="ocr-progress-title"
-	aria-describedby="ocr-progress-description"
-	oncancel={(event) => event.preventDefault()}
->
-	<div class="modal-body ocr-modal-body">
-		<h2 id="ocr-progress-title">{uploadPending ? '사진 추가 중' : '사진 분석 실패'}</h2>
-		{#if uploadPending}
-			<p id="ocr-progress-description" class="ocr-status" role="status" aria-live="polite">
-				{uploadStatus || `${uploadFileCount}장의 사진을 준비하는 중`}
-			</p>
-			{#if uploadProgress === undefined}
-				<progress
-					class="ocr-progress"
-					aria-label={uploadStatus || `${uploadFileCount}장의 사진을 준비하는 중`}
-				></progress>
-			{:else}
-				<progress
-					class="ocr-progress"
-					aria-label={uploadStatus}
-					value={uploadProgress}
-					max={uploadProgressMax}
-				></progress>
-			{/if}
-			<p class="ocr-warning">
-				새로고침하거나 창을 닫지 마세요. 분석 결과가 저장되지 않을 수 있어요.
-			</p>
-		{:else}
-			<p id="ocr-progress-description">사진 분석을 완료하지 못했습니다.</p>
-			<p class="message message-error" role="alert" aria-live="assertive">
-				{uploadError || form?.message || '잠시 후 다시 시도해 주세요.'}
-			</p>
-			<div class="modal-actions">
-				<button class="button button-secondary" type="button" onclick={closeUploadResult}
-					>닫기</button
-				>
-			</div>
-		{/if}
-	</div>
-</dialog>
-
-<dialog bind:this={testDialog} class="modal" aria-labelledby="test-settings-title">
-	<div class="modal-body">
-		<div class="modal-header">
-			<div>
-				<h2 id="test-settings-title">테스트 설정</h2>
-				<p>오늘 확인할 범위와 순서를 정해 보세요.</p>
-			</div>
-			<button
-				class="modal-close"
-				type="button"
-				aria-label="닫기"
-				title="닫기"
-				onclick={closeTestSettings}>×</button
-			>
-		</div>
-
-		<form method="post" action="?/startTest" use:enhance={enhanceStartTest} class="form-stack">
-			{#if testContinuousStep?.status === 'ready'}
-				<fieldset class="choice-group">
-					<legend>연속 학습 단계</legend>
-					<p class="continuous-step-summary">
-						{continuousPhaseLabel(testContinuousStep.phase!)} ·
-						{testContinuousStep.range?.start}~{testContinuousStep.range?.end}번
-					</p>
-					<input type="hidden" name="continuous" value="on" />
-					<input
-						type="hidden"
-						name="continuousBatchSize"
-						value={testContinuousStep.settings.batchSize}
-					/>
-					<input
-						type="hidden"
-						name="continuousDaySize"
-						value={testContinuousStep.settings.daySize}
-					/>
-					<input
-						type="hidden"
-						name="continuousStudyMode"
-						value={testContinuousStep.settings.studyMode}
-					/>
-					<p class="field-note">
-						{testContinuousStep.phase === 'cumulative'
-							? '오늘 외운 단어를 한 번에 다시 확인합니다.'
-							: '이 묶음의 암기를 마친 뒤 시작한 테스트입니다.'}
-					</p>
-				</fieldset>
-			{:else}
-				<fieldset class="choice-group">
-					<legend>출제 단어</legend>
-					<div class="choice-options">
-						<label class="choice"
-							><input type="radio" name="source" value="range" bind:group={testSource} /> 범위 선택</label
-						>
-						<label class="choice"
-							><input
-								type="radio"
-								name="source"
-								value="recent-result"
-								bind:group={testSource}
-								disabled={!data.latestResult}
-							/> 최근 결과 선택</label
-						>
-						<label class="choice"
-							><input
-								type="radio"
-								name="source"
-								value="starred"
-								bind:group={testSource}
-								disabled={!data.vocabulary.words.some((word) => word.starred)}
-							/> 별표 단어</label
-						>
-					</div>
-					{#if testSource === 'range'}
-						<label class="choice"
-							><input type="checkbox" name="all" bind:checked={testAll} /> 전체 단어</label
-						>
-						<div class="choice-options">
-							<div class="field">
-								<label for="test-start">시작 번호</label>
-								<input
-									id="test-start"
-									name="start"
-									type="number"
-									min={data.vocabulary.words[0]?.number ?? 1}
-									max={data.vocabulary.words.at(-1)?.number ?? 1}
-									bind:value={testStart}
-									disabled={testAll}
-								/>
-							</div>
-							<div class="field">
-								<label for="test-end">끝 번호</label>
-								<input
-									id="test-end"
-									name="end"
-									type="number"
-									min={data.vocabulary.words[0]?.number ?? 1}
-									max={data.vocabulary.words.at(-1)?.number ?? 1}
-									bind:value={testEnd}
-									disabled={testAll}
-								/>
-							</div>
-						</div>
-					{:else if testSource === 'recent-result'}
-						<p class="field-note">완료한 테스트들의 단어별 최신 결과에서 골라 출제합니다.</p>
-						<div class="choice-options">
-							{#each statusOptions as option (option.value)}
-								<label class="choice"
-									><input
-										type="checkbox"
-										name="statuses"
-										value={option.value}
-										checked={testStatuses.has(option.value)}
-										onchange={(event) => toggleTestStatus(event, option.value)}
-									/>
-									{option.label}</label
-								>
-							{/each}
-						</div>
-					{:else}
-						<p class="field-note">별표한 단어만 출제합니다.</p>
-					{/if}
-				</fieldset>
-			{/if}
-
-			<fieldset class="choice-group">
-				<legend>순서</legend>
-				<div class="choice-options">
-					<label class="choice"
-						><input type="radio" name="order" value="sequential" checked /> 순서대로</label
-					>
-					<label class="choice"><input type="radio" name="order" value="random" /> 섞어서</label>
-				</div>
-			</fieldset>
-
-			<fieldset class="choice-group">
-				<legend>출제 방향</legend>
-				<div class="choice-options">
-					<label class="choice"
-						><input type="radio" name="direction" value="english-to-korean" checked /> 영어 → 한국어</label
-					>
-					<label class="choice"
-						><input type="radio" name="direction" value="korean-to-english" /> 한국어 → 영어</label
-					>
-				</div>
-			</fieldset>
-
-			{#if form?.action === 'startTest' && form.message}<p
-					class="message message-error"
-					role="alert"
-					aria-live="assertive"
-				>
-					{form.message}
-				</p>{/if}
-			<div class="modal-actions">
-				<button class="button button-secondary" type="button" onclick={closeTestSettings}
-					>취소</button
-				>
-				<button class="button button-primary" type="submit" disabled={startPending}
-					>{startPending ? '준비 중…' : '테스트 시작'}</button
-				>
-			</div>
-		</form>
-	</div>
-</dialog>
+<TestSettingsDialog
+	bind:this={testDialog}
+	vocabulary={data.vocabulary}
+	latestResult={data.latestResult}
+	formMessage={form?.action === 'startTest' ? form.message : undefined}
+	{startPending}
+	{enhanceStartTest}
+	bind:testAll
+	bind:testSource
+	bind:testStart
+	bind:testEnd
+	{testStatuses}
+	continuousStep={testContinuousStep}
+	{statusOptions}
+	{continuousPhaseLabel}
+	{toggleTestStatus}
+	onclose={closeTestSettings}
+/>
 
 <dialog
 	bind:this={continuousSettingsDialog}
