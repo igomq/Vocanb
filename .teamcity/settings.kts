@@ -49,8 +49,8 @@ object VocanbBuildDeploy : BuildType({
         script {
             name = "Deploy through WireGuard"
             scriptContent = """
-                scp -i "%env.SERVICE_SSH_KEY_PATH%" -o BatchMode=yes -o StrictHostKeyChecking=accept-new vocanb-%build.number%.tgz "%env.SERVICE_SSH_USER%@%env.SERVICE_HOST%:/tmp/vocanb-%build.number%.tgz"
-                ssh -i "%env.SERVICE_SSH_KEY_PATH%" -o BatchMode=yes "%env.SERVICE_SSH_USER%@%env.SERVICE_HOST%" "sudo /usr/local/sbin/vocanb-release /tmp/vocanb-%build.number%.tgz %build.number%"
+                scp -i %env.SERVICE_SSH_KEY_PATH% -o BatchMode=yes -o StrictHostKeyChecking=accept-new vocanb-%build.number%.tgz "%env.SERVICE_SSH_USER%@%env.SERVICE_HOST%:/tmp/vocanb-%build.number%.tgz"
+                ssh -i %env.SERVICE_SSH_KEY_PATH% -o BatchMode=yes "%env.SERVICE_SSH_USER%@%env.SERVICE_HOST%" "sudo /usr/local/sbin/vocanb-release /tmp/vocanb-%build.number%.tgz %build.number%"
             """.trimIndent()
         }
     }
