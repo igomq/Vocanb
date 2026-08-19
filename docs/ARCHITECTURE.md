@@ -7,7 +7,7 @@ OCI Route VM: Nginx + TeamCity
   -> WireGuard 10.255.255.252/30
 Azure Service VM: SvelteKit adapter-node + systemd
   -> user-scoped atomic JSON and image files
-  -> Vertex AI global / gemini-3.6-flash via ADC
+  -> Vertex AI global / gemini-3.7-flash via ADC
 ```
 
 ## Application boundaries
