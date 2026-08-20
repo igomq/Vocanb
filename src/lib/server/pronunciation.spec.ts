@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }));
+vi.mock('@google/genai', () => ({
+	GoogleGenAI: class {
+		models = { generateContent };
+	},
+	ThinkingLevel: { LOW: 'LOW' }
+}));
+
 import {
 	applyPronunciationResults,
+	generateKoreanPronunciationGuides,
 	ipaToKorean,
 	lookupPronunciation,
 	parsePronunciationGuides,
@@ -106,5 +116,20 @@ describe('pronunciation lookup', () => {
 			pronunciation: { ipa: '[ˈæpəl]', guide: '애플' }
 		});
 		expect(result.persist).toEqual(result.result);
+	});
+
+	it('times out Vertex requests and retries transient failures', async () => {
+		process.env.GOOGLE_CLOUD_PROJECT = 'test-project';
+		generateContent.mockRejectedValueOnce({ status: 503 }).mockResolvedValueOnce({
+			text: JSON.stringify({ guides: [{ id: 'apple', guide: '애플' }] })
+		});
+
+		const result = await generateKoreanPronunciationGuides([
+			{ id: 'apple', english: 'apple', ipa: '[ˈæpəl]' }
+		]);
+
+		expect(result).toEqual(new Map([['apple', '애플']]));
+		expect(generateContent).toHaveBeenCalledTimes(2);
+		expect(generateContent.mock.calls[0][0].config.abortSignal).toBeInstanceOf(AbortSignal);
 	});
 });

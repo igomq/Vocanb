@@ -6,6 +6,8 @@ import {
 	uploadDirectory,
 	updateVocabulary
 } from './storage';
+import { MAX_TEST_HISTORY } from './storage';
+import { createTestSession, type Word } from '$lib/domain';
 import { access, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -34,6 +36,35 @@ afterEach(async () => {
 });
 
 describe('filesystem storage', () => {
+	it('bounds persisted test history', async () => {
+		const vocabulary = await createVocabulary(userId, '기록 상한', '');
+		const now = new Date().toISOString();
+		const word: Word = {
+			id: crypto.randomUUID(),
+			number: 1,
+			english: 'word',
+			meaning: '뜻',
+			sourceImageId: null,
+			uncertain: false,
+			starred: false,
+			createdAt: now,
+			updatedAt: now
+		};
+		const tests = Array.from({ length: MAX_TEST_HISTORY + 1 }, () =>
+			createTestSession([word], { start: 1, end: 1 }, 'sequential', 'english-to-korean')
+		);
+
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words: [word],
+			tests
+		}));
+
+		const stored = await getVocabulary(userId, vocabulary.id);
+		expect(stored?.tests).toHaveLength(MAX_TEST_HISTORY);
+		expect(stored?.tests[0].id).toBe(tests[1].id);
+	});
+
 	it('creates duplicate titles as separate vocabularies', async () => {
 		const first = await createVocabulary(userId, '워드마스터', 'Day 1');
 		const second = await createVocabulary(userId, '워드마스터', 'Day 1');

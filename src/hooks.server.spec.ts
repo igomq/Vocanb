@@ -14,6 +14,20 @@ describe('route protection', () => {
 			})
 		).rejects.toMatchObject({ status: 303, location: '/login?next=%2Fapp%2Fv%2F123' });
 	});
+
+	it('adds browser security headers to public responses', async () => {
+		const response = await handle({
+			event: {
+				url: new URL('http://localhost/login'),
+				locals: {},
+				cookies: { get: () => undefined }
+			} as never,
+			resolve: (() => new Response('ok')) as never
+		});
+
+		expect(response.headers.get('content-security-policy')).toContain("default-src 'self'");
+		expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+	});
 });
 
 describe('server error logging', () => {

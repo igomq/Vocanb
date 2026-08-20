@@ -1,6 +1,7 @@
 import {
 	createPasswordHash,
 	createSessionCookie,
+	isAppPath,
 	loginAllowed,
 	recordLoginFailure,
 	resetRateLimitsForTests,
@@ -18,6 +19,13 @@ beforeAll(async () => {
 beforeEach(() => resetRateLimitsForTests());
 
 describe('authentication', () => {
+	it('accepts only the application root and descendants as login destinations', () => {
+		expect(isAppPath('/app')).toBe(true);
+		expect(isAppPath('/app/v/123?x=1')).toBe(true);
+		expect(isAppPath('/app-anything')).toBe(false);
+		expect(isAppPath('https://example.com/app')).toBe(false);
+	});
+
 	it('accepts the correct password and rejects a wrong password', async () => {
 		expect(
 			await verifyPassword('correct horse battery staple', process.env.AUTH_PASSWORD_HASH!)

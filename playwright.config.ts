@@ -27,7 +27,7 @@ export default defineConfig({
 			SESSION_SECRET: 'playwright-session-secret-012345678901234567890123',
 			GOOGLE_CLOUD_PROJECT: 'unused-in-smoke',
 			GOOGLE_CLOUD_LOCATION: 'global',
-			VERTEX_MODEL: 'gemini-3.6-flash'
+			VERTEX_MODEL: 'gemini-3.7-flash'
 		}
 	},
 	outputDir: 'test-results'

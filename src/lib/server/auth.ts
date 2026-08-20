@@ -10,6 +10,23 @@ const SCRYPT_OPTIONS = { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 } as co
 type SessionPayload = { sub: string; exp: number; nonce: string };
 const attempts = new Map<string, number[]>();
 
+export function isAppPath(value: string | null | undefined): value is string {
+	if (typeof value !== 'string' || !value.startsWith('/') || value.includes('\\')) return false;
+	try {
+		const parsed = new URL(value, 'http://local');
+		if (parsed.origin !== 'http://local') return false;
+		const segments = parsed.pathname
+			.split('/')
+			.slice(1)
+			.map((segment) => decodeURIComponent(segment));
+		if (segments.some((segment) => segment === '.' || segment === '..' || segment.includes('/')))
+			return false;
+		return parsed.pathname === '/app' || parsed.pathname.startsWith('/app/');
+	} catch {
+		return false;
+	}
+}
+
 function scryptAsync(password: string, salt: Buffer, length: number) {
 	return new Promise<Buffer>((resolve, reject) => {
 		scrypt(password, salt, length, SCRYPT_OPTIONS, (error, key) =>
