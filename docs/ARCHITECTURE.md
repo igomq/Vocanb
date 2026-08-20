@@ -7,7 +7,7 @@ OCI Route VM: Nginx + TeamCity
   -> OCI VCN private network
 OCI Service VM 10.0.0.77: SvelteKit adapter-node + systemd
   -> user-scoped atomic JSON and image files
-  -> Vertex AI global / gemini-3.7-flash via ADC
+  -> Vertex AI global / gemini-3.6-flash via ADC
 ```
 
 ## Application boundaries

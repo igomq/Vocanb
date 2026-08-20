@@ -133,7 +133,7 @@ export async function generateKoreanPronunciationGuides(
 	const { project, location, model } = getVertexConfig();
 	const client = new GoogleGenAI({ vertexai: true, project, location });
 	let lastError: unknown;
-	for (let attempt = 0; attempt < 3; attempt += 1) {
+	for (let attempt = 0; attempt < 4; attempt += 1) {
 		try {
 			const response = await client.models.generateContent({
 				model,
@@ -157,8 +157,10 @@ export async function generateKoreanPronunciationGuides(
 			return guides;
 		} catch (error) {
 			lastError = error;
-			if (!retryableVertexError(error) || attempt === 2) break;
-			await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+			if (!retryableVertexError(error) || attempt === 3) break;
+			await new Promise((resolve) =>
+				setTimeout(resolve, 1_000 * 2 ** attempt + Math.random() * 250)
+			);
 		}
 	}
 	throw new Error('발음 안내 응답을 확인할 수 없습니다.', { cause: lastError });

@@ -58,7 +58,7 @@ export class VertexOcrProvider implements OcrProvider {
 		const { project, location, model } = getVertexConfig();
 		const client = new GoogleGenAI({ vertexai: true, project, location });
 		let lastError: unknown;
-		for (let attempt = 0; attempt < 3; attempt += 1) {
+		for (let attempt = 0; attempt < 4; attempt += 1) {
 			try {
 				const response = await client.models.generateContent({
 					model,
@@ -89,8 +89,10 @@ export class VertexOcrProvider implements OcrProvider {
 				};
 			} catch (error) {
 				lastError = error;
-				if (!retryable(error) || attempt === 2) break;
-				await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+				if (!retryable(error) || attempt === 3) break;
+				await new Promise((resolve) =>
+					setTimeout(resolve, 1_000 * 2 ** attempt + Math.random() * 250)
+				);
 			}
 		}
 		const failure = lastError as {

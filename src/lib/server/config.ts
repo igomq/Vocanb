@@ -30,8 +30,8 @@ export function getDataDir() {
 export function getVertexConfig() {
 	const location =
 		(process.env.GOOGLE_CLOUD_LOCATION || env.GOOGLE_CLOUD_LOCATION)?.trim() || 'global';
-	const model = (process.env.VERTEX_MODEL || env.VERTEX_MODEL)?.trim() || 'gemini-3.7-flash';
+	const model = (process.env.VERTEX_MODEL || env.VERTEX_MODEL)?.trim() || 'gemini-3.6-flash';
 	if (location !== 'global') throw new Error('GOOGLE_CLOUD_LOCATION은 global이어야 합니다.');
-	if (model !== 'gemini-3.7-flash') throw new Error('VERTEX_MODEL은 gemini-3.7-flash여야 합니다.');
+	if (model !== 'gemini-3.6-flash') throw new Error('VERTEX_MODEL은 gemini-3.6-flash여야 합니다.');
 	return { project: required('GOOGLE_CLOUD_PROJECT'), location, model };
 }
