@@ -47,7 +47,7 @@ object VocanbBuildDeploy : BuildType({
             scriptContent = "tar -czf vocanb-%build.number%.tgz build package.json pnpm-lock.yaml pnpm-workspace.yaml"
         }
         script {
-            name = "Deploy through WireGuard"
+            name = "Deploy over OCI VCN"
             scriptContent = """
                 scp -i %env.SERVICE_SSH_KEY_PATH% -o BatchMode=yes -o StrictHostKeyChecking=accept-new vocanb-%build.number%.tgz "%env.SERVICE_SSH_USER%@%env.SERVICE_HOST%:/tmp/vocanb-%build.number%.tgz"
                 ssh -i %env.SERVICE_SSH_KEY_PATH% -o BatchMode=yes "%env.SERVICE_SSH_USER%@%env.SERVICE_HOST%" "sudo /usr/local/sbin/vocanb-release /tmp/vocanb-%build.number%.tgz %build.number%"

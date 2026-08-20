@@ -1,7 +1,7 @@
 [Unit]
 Description=Vocanb SvelteKit service
-After=network-online.target wg-quick@wg0.service
-Wants=network-online.target wg-quick@wg0.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

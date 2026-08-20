@@ -26,7 +26,7 @@ printf '%s\n' \
     "    ssl_certificate_key $certificate_key;" \
     '    client_max_body_size 100m;' \
     '    location / {' \
-    '        proxy_pass http://10.255.255.254:3000;' \
+    '        proxy_pass http://10.0.0.77:3000;' \
     '        proxy_http_version 1.1;' \
     '        proxy_set_header Host $host;' \
     '        proxy_set_header X-Real-IP $remote_addr;' \

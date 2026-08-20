@@ -18,7 +18,7 @@ sudo -u vocanb env PATH=/opt/node-v24/bin:/usr/bin:/bin /opt/node-v24/bin/corepa
 ln -sfn "$release" /opt/vocanb/current
 systemctl restart vocanb
 
-if ! curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused http://10.255.255.254:3000/healthz >/dev/null; then
+if ! curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused http://10.0.0.77:3000/healthz >/dev/null; then
     if [[ -n "$previous" ]]; then
         ln -sfn "$previous" /opt/vocanb/current
         systemctl restart vocanb

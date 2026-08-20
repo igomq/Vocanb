@@ -15,5 +15,7 @@ fi
 id vocanb >/dev/null 2>&1 || useradd --system --home /var/lib/vocanb --shell /usr/sbin/nologin vocanb
 rm -rf /opt/node-v24
 cp -a "$source_node" /opt/node-v24
+chown -R root:root /opt/node-v24
+command -v restorecon >/dev/null && restorecon -RF /opt/node-v24
 install -d -o vocanb -g vocanb -m 750 /opt/vocanb/releases /var/lib/vocanb
 install -d -o root -g vocanb -m 750 /etc/vocanb
