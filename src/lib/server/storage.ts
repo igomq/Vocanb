@@ -8,12 +8,12 @@ export const MAX_TEST_HISTORY = 500;
 // ponytail: in-process locks assume one Node instance; use a shared store before horizontal scaling.
 const locks = new Map<string, Promise<void>>();
 
-function safeId(value: string) {
+export function safeId(value: string) {
 	if (!SAFE_ID.test(value)) throw new Error('잘못된 식별자입니다.');
 	return value;
 }
 
-function userRoot(userId: string) {
+export function userRoot(userId: string) {
 	return join(getDataDir(), 'users', safeId(userId));
 }
 
@@ -34,7 +34,7 @@ export function imagePath(userId: string, vocabularyId: string, filename: string
 	return join(uploadDirectory(userId, vocabularyId), filename);
 }
 
-async function withLock<T>(key: string, operation: () => Promise<T>) {
+export async function withLock<T>(key: string, operation: () => Promise<T>) {
 	const previous = locks.get(key) || Promise.resolve();
 	let release!: () => void;
 	const gate = new Promise<void>((resolve) => (release = resolve));
@@ -49,7 +49,7 @@ async function withLock<T>(key: string, operation: () => Promise<T>) {
 	}
 }
 
-async function atomicWrite(path: string, value: unknown) {
+export async function atomicWrite(path: string, value: unknown) {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 	const temporary = `${path}.${crypto.randomUUID()}.tmp`;
 	const handle = await open(temporary, 'wx', 0o600);

@@ -10,9 +10,11 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 	await page.getByRole('button', { name: '로그인' }).click();
 	await expect(page).toHaveURL(/\/app$/);
 
-	await page.getByRole('button', { name: '단어장 만들기', exact: true }).click();
+	await page.getByRole('button', { name: '학습장 추가', exact: false }).click();
 	await expect(page).toHaveURL(/\/app\?create=1$/);
-	await expect(page.locator('dialog[aria-labelledby="create-title"]')).toBeVisible();
+	const createDialog = page.locator('dialog[aria-labelledby="study-create-title"]');
+	await expect(createDialog).toBeVisible();
+	await page.getByRole('button', { name: /사진에서 단어와 뜻을 추출/ }).click();
 	await page.getByLabel('단어장 이름').fill(title);
 	await page.getByRole('button', { name: '단어장 만들기', exact: true }).last().click();
 	await expect(page).toHaveURL(/\/app\/v\/[0-9a-f-]{36}$/);
