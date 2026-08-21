@@ -15,11 +15,12 @@ Rules:
 11. Do not expand a partial highlight to the whole sentence.
 12. When a visually continuous highlight wraps onto the next printed line, treat the wrapped text as one continuous memorized span.
 13. If emphasized spans in the same sentence are separated by visibly unmarked text, preserve the unmarked text as memorize=false.
-14. Ignore decorative doodles, stars, circles, or handwriting that does not mark readable source text.
-15. Do not assume a particular highlighter color.
-16. Preserve passage reading order and paragraph reading order.
-17. sourcePageStart and sourcePageEnd use 1-based PDF page numbers.
-18. Return only the requested structured JSON.`;
+14. Assign punctuation directly touching the start or end of an emphasized span to that memorize=true span, including quotation marks, commas, periods, colons, semicolons, question marks, and exclamation marks.
+15. Ignore decorative doodles, stars, circles, or handwriting that does not mark readable source text.
+16. Do not assume a particular highlighter color.
+17. Preserve passage reading order and paragraph reading order.
+18. sourcePageStart and sourcePageEnd use 1-based PDF page numbers.
+19. Return only the requested structured JSON.`;
 
 export const SENTENCE_IMPORT_USER_INSTRUCTION = `Analyze this PDF as a sentence-memorization study document.
 Split it into logical reading passages, extract the full English passage text in reading order, and mark only the visually highlighted or underlined text spans as memorize=true.

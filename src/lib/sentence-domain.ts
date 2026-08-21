@@ -115,16 +115,44 @@ export type NormalizedSentencePassage = Omit<
 	'id' | 'order' | 'summary' | 'translation'
 >;
 
-/** Runs with adjacent same memorize state (and only-whitespace runs) are merged. */
+const leadingPunctuation = /^[\p{P}]+/u;
+const trailingPunctuation = /[\p{P}]+$/u;
+
+/** Adjacent equal runs are merged and punctuation touching a target stays under its tape. */
 export function normalizeImportRuns(runs: MemorizationRun[]): MemorizationRun[] {
 	const merged: MemorizationRun[] = [];
 	for (const run of runs) {
 		if (!run.text.trim()) continue;
-		const previous = merged.at(-1);
+		let text = run.text;
+		let previous = merged.at(-1);
+
+		if (previous?.memorize && !run.memorize) {
+			const punctuation = text.match(leadingPunctuation)?.[0];
+			if (punctuation) {
+				previous.text += punctuation;
+				text = text.slice(punctuation.length);
+				if (!text.trim()) {
+					previous.text += text;
+					continue;
+				}
+			}
+		}
+
+		previous = merged.at(-1);
+		if (run.memorize && previous && !previous.memorize) {
+			const punctuation = previous.text.match(trailingPunctuation)?.[0];
+			if (punctuation) {
+				previous.text = previous.text.slice(0, -punctuation.length);
+				text = punctuation + text;
+				if (!previous.text) merged.pop();
+			}
+		}
+
+		previous = merged.at(-1);
 		if (previous && previous.memorize === run.memorize) {
-			previous.text += run.text;
+			previous.text += text;
 		} else {
-			merged.push({ text: run.text, memorize: run.memorize });
+			merged.push({ text, memorize: run.memorize });
 		}
 	}
 	return merged;
@@ -153,6 +181,105 @@ export function passagePlainText(passage: Pick<SentencePassage, 'paragraphs'>) {
 	return passage.paragraphs
 		.map((paragraph) => paragraph.runs.map((run) => run.text).join(''))
 		.join('\n\n');
+}
+
+export type SentenceTestResult = {
+	status: 'correct' | 'wrong' | 'ambiguous' | 'partial';
+	score?: number;
+	wrongWordIndexes?: number[];
+};
+
+export type SentenceWordChunk = { text: string; wordIndex: number | null };
+
+/** Splits display text without losing punctuation or offsets between words. */
+export function sentenceWordChunks(text: string): SentenceWordChunk[] {
+	const matches = [...text.matchAll(/[\p{L}\p{N}]+(?:[’'’-][\p{L}\p{N}]+)*/gu)];
+	const chunks: SentenceWordChunk[] = [];
+	let cursor = 0;
+	for (const [wordIndex, match] of matches.entries()) {
+		if (match.index! > cursor)
+			chunks.push({ text: text.slice(cursor, match.index), wordIndex: null });
+		chunks.push({ text: match[0], wordIndex });
+		cursor = match.index! + match[0].length;
+	}
+	if (cursor < text.length) chunks.push({ text: text.slice(cursor), wordIndex: null });
+	return chunks;
+}
+
+function normalizeAnswer(text: string) {
+	return text
+		.normalize('NFKC')
+		.toLocaleLowerCase('en')
+		.replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function answerWords(text: string) {
+	return sentenceWordChunks(text)
+		.filter((chunk): chunk is SentenceWordChunk & { wordIndex: number } => chunk.wordIndex !== null)
+		.map((chunk) => normalizeAnswer(chunk.text));
+}
+
+function editDistance(left: string, right: string) {
+	let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+	for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+		const current = [leftIndex];
+		for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+			current[rightIndex] = Math.min(
+				current[rightIndex - 1] + 1,
+				previous[rightIndex] + 1,
+				previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1)
+			);
+		}
+		previous = current;
+	}
+	return previous[right.length];
+}
+
+function wrongExpectedWords(expected: string[], actual: string[]) {
+	const lengths = Array.from({ length: expected.length + 1 }, () =>
+		new Array<number>(actual.length + 1).fill(0)
+	);
+	for (let expectedIndex = expected.length - 1; expectedIndex >= 0; expectedIndex -= 1) {
+		for (let actualIndex = actual.length - 1; actualIndex >= 0; actualIndex -= 1) {
+			lengths[expectedIndex][actualIndex] =
+				expected[expectedIndex] === actual[actualIndex]
+					? lengths[expectedIndex + 1][actualIndex + 1] + 1
+					: Math.max(
+							lengths[expectedIndex + 1][actualIndex],
+							lengths[expectedIndex][actualIndex + 1]
+						);
+		}
+	}
+	const matched = new Set<number>();
+	let expectedIndex = 0;
+	let actualIndex = 0;
+	while (expectedIndex < expected.length && actualIndex < actual.length) {
+		if (expected[expectedIndex] === actual[actualIndex]) {
+			matched.add(expectedIndex++);
+			actualIndex += 1;
+		} else if (lengths[expectedIndex + 1][actualIndex] >= lengths[expectedIndex][actualIndex + 1]) {
+			expectedIndex += 1;
+		} else {
+			actualIndex += 1;
+		}
+	}
+	return expected.flatMap((_, index) => (matched.has(index) ? [] : [index]));
+}
+
+/** Punctuation/case-insensitive character accuracy plus expected words that differ. */
+export function gradeSentenceAnswer(expected: string, actual: string) {
+	const normalizedExpected = normalizeAnswer(expected);
+	const normalizedActual = normalizeAnswer(actual);
+	const longest = Math.max(normalizedExpected.length, normalizedActual.length);
+	return {
+		score:
+			longest === 0
+				? 100
+				: Math.round(
+						((longest - editDistance(normalizedExpected, normalizedActual)) / longest) * 100
+					),
+		wrongWordIndexes: wrongExpectedWords(answerWords(expected), answerWords(actual))
+	};
 }
 
 function sentenceFallbackSplit(text: string) {

@@ -1,14 +1,20 @@
 <script lang="ts">
-	import { passageNavState, type SentencePassage } from '$lib/sentence-domain';
+	import {
+		passageNavState,
+		type SentencePassage,
+		type SentenceTestResult
+	} from '$lib/sentence-domain';
 	import MemorizationPassage from '$lib/components/MemorizationPassage.svelte';
 	import PassageSummaryView from '$lib/components/PassageSummaryView.svelte';
 	import PassageTranslationView from '$lib/components/PassageTranslationView.svelte';
+	import SentenceTest from '$lib/components/SentenceTest.svelte';
 
 	let { data } = $props();
 
-	type Tab = 'summary' | 'passage' | 'translation';
+	type Tab = 'summary' | 'passage' | 'test' | 'translation';
 	let activeIndex = $state(0);
 	let tab = $state<Tab>('passage');
+	let testResults = $state<Record<string, Record<string, SentenceTestResult>>>({});
 
 	const passages = $derived(data.book.passages);
 	const activePassage = $derived(passages[activeIndex] as SentencePassage);
@@ -22,6 +28,17 @@
 
 	function switchTab(next: Tab) {
 		tab = next;
+	}
+
+	function recordResult(key: string, result: SentenceTestResult | null) {
+		const passageResults = { ...(testResults[activePassage.id] ?? {}) };
+		if (result) passageResults[key] = result;
+		else delete passageResults[key];
+		testResults = { ...testResults, [activePassage.id]: passageResults };
+	}
+
+	function resetResults() {
+		testResults = { ...testResults, [activePassage.id]: {} };
 	}
 </script>
 
@@ -73,6 +90,14 @@
 					>
 					<button
 						class="sentence-tab"
+						class:is-active={tab === 'test'}
+						type="button"
+						role="tab"
+						aria-selected={tab === 'test'}
+						onclick={() => switchTab('test')}>테스트</button
+					>
+					<button
+						class="sentence-tab"
 						class:is-active={tab === 'translation'}
 						type="button"
 						role="tab"
@@ -92,7 +117,17 @@
 				{#if tab === 'summary'}
 					<PassageSummaryView bookId={data.book.id} passage={activePassage} />
 				{:else if tab === 'passage'}
-					<MemorizationPassage passage={activePassage} />
+					<MemorizationPassage
+						passage={activePassage}
+						results={testResults[activePassage.id] ?? {}}
+					/>
+				{:else if tab === 'test'}
+					<SentenceTest
+						passage={activePassage}
+						results={testResults[activePassage.id] ?? {}}
+						onresult={recordResult}
+						onreset={resetResults}
+					/>
 				{:else}
 					<PassageTranslationView bookId={data.book.id} passage={activePassage} />
 				{/if}

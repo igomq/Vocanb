@@ -3,6 +3,7 @@ import {
 	SentencePassageSchema,
 	combineTranslations,
 	defaultTitleFromFileName,
+	gradeSentenceAnswer,
 	normalizeImportRuns,
 	normalizeSentenceImport,
 	parseSentenceSegments,
@@ -113,6 +114,33 @@ describe('sentence normalization', () => {
 		).toEqual([{ text: 'hi', memorize: true }]);
 	});
 
+	it('absorbs punctuation touching a memorized span without dropping following text', () => {
+		expect(
+			normalizeImportRuns([
+				{ text: 'She called it “', memorize: false },
+				{ text: 'a distant dream', memorize: true },
+				{ text: ',” but kept trying.', memorize: false }
+			])
+		).toEqual([
+			{ text: 'She called it ', memorize: false },
+			{ text: '“a distant dream,”', memorize: true },
+			{ text: ' but kept trying.', memorize: false }
+		]);
+	});
+
+	it('keeps trailing whitespace when a punctuation-only run follows a target', () => {
+		expect(
+			normalizeImportRuns([
+				{ text: 'Remember this', memorize: true },
+				{ text: '. ', memorize: false },
+				{ text: 'Next sentence.', memorize: false }
+			])
+		).toEqual([
+			{ text: 'Remember this. ', memorize: true },
+			{ text: 'Next sentence.', memorize: false }
+		]);
+	});
+
 	it('sorts passages by sourceOrder and reapplies order', () => {
 		const normalized = normalizeSentenceImport({
 			passages: [importResponse.passages[1], importResponse.passages[0]]
@@ -156,6 +184,27 @@ describe('sentence normalization', () => {
 });
 
 describe('sentence segmentation and translation pairing', () => {
+	it('grades typing without punctuation or case and locates partial word errors', () => {
+		expect(gradeSentenceAnswer('Great things take time.', 'great things take time')).toEqual({
+			score: 100,
+			wrongWordIndexes: []
+		});
+		expect(gradeSentenceAnswer('Great things take time.', 'great things need time')).toEqual({
+			score: 79,
+			wrongWordIndexes: [2]
+		});
+		expect(gradeSentenceAnswer("Don't stop.", 'dont stop')).toEqual({
+			score: 100,
+			wrongWordIndexes: []
+		});
+	});
+
+	it('does not shift every later mismatch when one expected word is omitted', () => {
+		expect(gradeSentenceAnswer('one two three four', 'one three four').wrongWordIndexes).toEqual([
+			1
+		]);
+	});
+
 	it('splits English prose into sentences', () => {
 		const segments = parseSentenceSegments(
 			'Great things take time to build. This once-distant dream now seems within our reach.'
