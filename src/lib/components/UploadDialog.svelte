@@ -92,12 +92,11 @@
 					</p>
 				</div>
 			{/if}
-			<div class="field">
-				<label class="choice" style="border:0;padding-left:0">
-					<input type="checkbox" bind:checked={includePronunciation} /> 발음 기호 함께 가져오기
-				</label>
-				<p class="field-note">해제하면 발음 기호 없이 단어만 저장됩니다.</p>
-			</div>
+			<label class="choice" style="width:fit-content">
+				<input type="checkbox" bind:checked={includePronunciation} style="width:16px;height:16px" /> 발음
+				기호 함께 가져오기
+			</label>
+			<p class="field-note" style="margin-top:6px">해제하면 발음 기호 없이 단어만 저장됩니다.</p>
 			<div class="modal-actions">
 				<button class="button button-secondary" type="button" onclick={closeUploadSettings}
 					>취소</button
