@@ -41,13 +41,25 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 };
 
 function text(data: FormData, name: string, max: number) {
-	const value = String(data.get(name) ?? '').trim();
+	const raw = String(data.get(name) ?? '');
+	const value = raw
+		.replaceAll('*', '')
+		.replaceAll('\u2022', '')
+		.replaceAll('\u00B7', '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
 	if (!value || value.length > max) throw new Error('입력값을 확인해 주세요.');
 	return value;
 }
 
 function optionalText(data: FormData, name: string, max: number) {
-	const value = String(data.get(name) ?? '').trim();
+	const raw = String(data.get(name) ?? '');
+	const value = raw
+		.replaceAll('*', '')
+		.replaceAll('\u2022', '')
+		.replaceAll('\u00B7', '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
 	if (value.length > max) throw new Error('입력값을 확인해 주세요.');
 	return value || undefined;
 }
@@ -163,6 +175,7 @@ export const actions: Actions = {
 			});
 		}
 
+		const includePronunciation = String(data.get('includePronunciation') ?? 'on') !== 'off';
 		const prepared: {
 			imageId: string;
 			filename: string;
@@ -173,7 +186,7 @@ export const actions: Actions = {
 			const entries = [...results[index].entries]
 				.sort((left, right) => left.sourceOrder - right.sourceOrder)
 				.map(normalizeOcrEntry)
-				.filter(({ meaning }) => meaning);
+				.filter(({ english, meaning }) => english && meaning);
 			if (!entries.length) continue;
 			const now = new Date().toISOString();
 			const imageId = crypto.randomUUID();
@@ -224,6 +237,8 @@ export const actions: Actions = {
 					});
 					vocabulary.words.push(...image.words.map((word) => ({ ...word, number: ++number })));
 				}
+				if (!includePronunciation) vocabulary.pronunciationEnabled = false;
+				else if (vocabulary.pronunciationEnabled === false) vocabulary.pronunciationEnabled = true;
 				return vocabulary;
 			});
 			return {

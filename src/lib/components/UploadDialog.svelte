@@ -13,7 +13,8 @@
 		uploadProgressMax,
 		formMessage,
 		closeUploadSettings,
-		closeUploadResult
+		closeUploadResult,
+		includePronunciation = $bindable(true)
 	}: {
 		uploadSettingsDialog?: HTMLDialogElement;
 		uploadDialog?: HTMLDialogElement;
@@ -29,6 +30,7 @@
 		formMessage?: string;
 		closeUploadSettings: () => void;
 		closeUploadResult: () => void;
+		includePronunciation?: boolean;
 	} = $props();
 </script>
 
@@ -90,6 +92,12 @@
 					</p>
 				</div>
 			{/if}
+			<div class="field">
+				<label class="choice" style="border:0;padding-left:0">
+					<input type="checkbox" bind:checked={includePronunciation} /> 발음 기호 함께 가져오기
+				</label>
+				<p class="field-note">해제하면 발음 기호 없이 단어만 저장됩니다.</p>
+			</div>
 			<div class="modal-actions">
 				<button class="button button-secondary" type="button" onclick={closeUploadSettings}
 					>취소</button

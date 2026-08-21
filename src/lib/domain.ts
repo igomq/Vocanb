@@ -143,7 +143,8 @@ export const VocabularySchema = z
 		updatedAt: z.string(),
 		images: z.array(VocabularyImageSchema),
 		words: z.array(WordSchema),
-		tests: z.array(TestSessionSchema)
+		tests: z.array(TestSessionSchema),
+		pronunciationEnabled: z.boolean().optional()
 	})
 	.strict();
 export type Vocabulary = z.infer<typeof VocabularySchema>;
@@ -188,17 +189,32 @@ const partOfSpeechPrefix =
 const relationNote =
 	/(?:^|\s+|(?=\[|\())(?:\[|\()?\s*(?:유(?:의어)?|반(?:의어)?|syn(?:onym)?|ant(?:onym)?)(?:\s*[:：]\s*|\s+)(?=\S)[\s\S]*?(?:\]|\)|$)/giu;
 
+export function sanitizeWordField(value: string) {
+	return value
+		.replaceAll('*', '')
+		.replaceAll('\u2022', '')
+		.replaceAll('\u00B7', '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
+}
+
+export function sanitizeWordInput(value: string, max: number) {
+	const sanitized = sanitizeWordField(value);
+	if (!sanitized || sanitized.length > max) throw new Error('입력값을 확인해 주세요.');
+	return sanitized;
+}
+
 export function normalizeOcrEntry(entry: OcrResponse['entries'][number]) {
+	const english = sanitizeWordField(entry.english);
 	let meaning = entry.meaning;
 	const prefix = meaning.match(partOfSpeechPrefix);
 	if (prefix) meaning = meaning.slice(prefix[0].length);
-	meaning = meaning
-		.replace(relationNote, ' ')
-		.replace(/\s{2,}/g, ' ')
-		.trim();
-	const rawPartOfSpeech = (entry.partOfSpeech || prefix?.[1] || '').replace(/\.$/, '').trim();
+	meaning = sanitizeWordField(meaning.replace(relationNote, ' '));
+	const rawPartOfSpeech = sanitizeWordField(
+		(entry.partOfSpeech || prefix?.[1] || '').replace(/\.$/, '')
+	);
 	const partOfSpeech = partOfSpeechLabels[rawPartOfSpeech.toLowerCase()] || rawPartOfSpeech;
-	return { ...entry, meaning, ...(partOfSpeech ? { partOfSpeech } : {}) };
+	return { ...entry, english, meaning, ...(partOfSpeech ? { partOfSpeech } : {}) };
 }
 
 export function removeWords(vocabulary: Vocabulary, wordIds: ReadonlySet<string>) {

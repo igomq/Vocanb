@@ -98,6 +98,7 @@
 	let uploadFiles = $state<File[]>([]);
 	let uploadMode = $state<'all' | 'targets'>('all');
 	let uploadTargets = $state<(number | undefined)[]>([]);
+	let includePronunciation = $state(true);
 	let uploadFileCount = $state(0);
 	let uploadStatus = $state('');
 	let uploadProgress = $state<number | undefined>();
@@ -360,6 +361,8 @@
 	}
 
 	function pronunciationFor(word: Word) {
+		if ((data.vocabulary as { pronunciationEnabled?: boolean }).pronunciationEnabled === false)
+			return null;
 		const key = pronunciationKey(word);
 		return Object.hasOwn(pronunciationByWordKey, key)
 			? pronunciationByWordKey[key]
@@ -434,7 +437,8 @@
 		if (
 			uploadPending ||
 			!pronunciationRequestKey ||
-			pronunciationRequestKey === pronunciationRequestStarted
+			pronunciationRequestKey === pronunciationRequestStarted ||
+			(data.vocabulary as { pronunciationEnabled?: boolean }).pronunciationEnabled === false
 		)
 			return;
 		pronunciationRequestStarted = pronunciationRequestKey;
@@ -462,6 +466,8 @@
 		}
 		uploadMode = 'all';
 		uploadTargets = uploadFiles.map(() => 1);
+		includePronunciation =
+			(data.vocabulary as { pronunciationEnabled?: boolean }).pronunciationEnabled ?? true;
 		uploadSettingsDialog?.showModal();
 	}
 
@@ -543,6 +549,7 @@
 		}
 		formData.delete('images');
 		for (const file of prepared) formData.append('images', file);
+		formData.set('includePronunciation', includePronunciation ? 'on' : 'off');
 		uploadStatus = `${files.length}장의 사진에서 단어를 읽고 저장하는 중`;
 		uploadProgress = undefined;
 		controller.signal.addEventListener(
@@ -559,7 +566,7 @@
 				await update();
 				if (result.type !== 'success') return;
 				await tick();
-				const wordIds = pronunciationRequestWordIds;
+				const wordIds = includePronunciation ? pronunciationRequestWordIds : [];
 				if (wordIds.length) {
 					uploadProgress = 0;
 					uploadProgressMax = wordIds.length;
@@ -1015,6 +1022,7 @@
 	{uploadFileCount}
 	bind:uploadMode
 	bind:uploadTargets
+	bind:includePronunciation
 	{uploadPending}
 	{uploadError}
 	{uploadStatus}
