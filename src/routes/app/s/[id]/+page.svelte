@@ -8,16 +8,23 @@
 	import PassageSummaryView from '$lib/components/PassageSummaryView.svelte';
 	import PassageTranslationView from '$lib/components/PassageTranslationView.svelte';
 	import SentenceTest from '$lib/components/SentenceTest.svelte';
+	import { invalidateAll } from '$app/navigation';
 
 	let { data } = $props();
 
 	type Tab = 'summary' | 'passage' | 'test' | 'translation';
 	let activeIndex = $state(0);
 	let tab = $state<Tab>('passage');
-	// svelte-ignore state_referenced_locally
-	let testResults = $state<Record<string, Record<string, SentenceTestResult>>>(
-		Object.fromEntries(data.book.passages.map((passage) => [passage.id, passage.testResults]))
-	);
+	let testResults = $state<Record<string, Record<string, SentenceTestResult>>>({});
+	let syncedBookId = '';
+
+	$effect(() => {
+		if (syncedBookId === data.book.id) return;
+		syncedBookId = data.book.id;
+		testResults = Object.fromEntries(
+			data.book.passages.map((passage) => [passage.id, passage.testResults])
+		);
+	});
 
 	const passages = $derived(data.book.passages);
 	const activePassage = $derived(passages[activeIndex] as SentencePassage);
@@ -51,11 +58,19 @@
 	}
 
 	function saveResults(results: Record<string, SentenceTestResult>) {
-		fetch(`/app/s/${data.book.id}/test-results`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ passageId: activePassage.id, results })
-		}).catch((error) => console.error('Sentence test result save failed:', error));
+		void (async () => {
+			try {
+				const response = await fetch(`/app/s/${data.book.id}/test-results`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ passageId: activePassage.id, results })
+				});
+				if (!response.ok) throw new Error(`HTTP ${response.status}`);
+				await invalidateAll();
+			} catch (error) {
+				console.error('Sentence test result save failed:', error);
+			}
+		})();
 	}
 </script>
 
