@@ -34,6 +34,14 @@ export const TranslationItemSchema = z
 	.strict();
 export type TranslationItem = z.infer<typeof TranslationItemSchema>;
 
+export const SentenceTestResultSchema = z
+	.object({
+		status: z.enum(['correct', 'wrong', 'ambiguous', 'partial']),
+		score: z.number().int().min(0).max(100).optional(),
+		wrongWordIndexes: z.array(z.number().int().nonnegative()).optional()
+	})
+	.strict();
+
 export const SentencePassageSchema = z
 	.object({
 		id: z.string().uuid(),
@@ -43,7 +51,8 @@ export const SentencePassageSchema = z
 		sourcePageEnd: z.number().int().min(1),
 		paragraphs: z.array(PassageParagraphSchema).min(1),
 		summary: PassageSummarySchema.nullable(),
-		translation: z.array(TranslationItemSchema).nullable()
+		translation: z.array(TranslationItemSchema).nullable(),
+		testResults: z.record(z.string(), SentenceTestResultSchema).default({})
 	})
 	.strict()
 	.refine((passage) => passage.sourcePageStart <= passage.sourcePageEnd, {
@@ -112,7 +121,7 @@ export type PassageTranslationResponse = z.infer<typeof PassageTranslationRespon
 
 export type NormalizedSentencePassage = Omit<
 	SentencePassage,
-	'id' | 'order' | 'summary' | 'translation'
+	'id' | 'order' | 'summary' | 'translation' | 'testResults'
 >;
 
 const leadingPunctuation = /^[\p{P}]+/u;

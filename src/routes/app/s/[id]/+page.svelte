@@ -14,7 +14,10 @@
 	type Tab = 'summary' | 'passage' | 'test' | 'translation';
 	let activeIndex = $state(0);
 	let tab = $state<Tab>('passage');
-	let testResults = $state<Record<string, Record<string, SentenceTestResult>>>({});
+	// svelte-ignore state_referenced_locally
+	let testResults = $state<Record<string, Record<string, SentenceTestResult>>>(
+		Object.fromEntries(data.book.passages.map((passage) => [passage.id, passage.testResults]))
+	);
 
 	const passages = $derived(data.book.passages);
 	const activePassage = $derived(passages[activeIndex] as SentencePassage);
@@ -35,10 +38,24 @@
 		if (result) passageResults[key] = result;
 		else delete passageResults[key];
 		testResults = { ...testResults, [activePassage.id]: passageResults };
+		saveResults(passageResults);
 	}
 
 	function resetResults() {
-		testResults = { ...testResults, [activePassage.id]: {} };
+		recordAllResults({});
+	}
+
+	function recordAllResults(results: Record<string, SentenceTestResult>) {
+		testResults = { ...testResults, [activePassage.id]: results };
+		saveResults(results);
+	}
+
+	function saveResults(results: Record<string, SentenceTestResult>) {
+		fetch(`/app/s/${data.book.id}/test-results`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ passageId: activePassage.id, results })
+		}).catch((error) => console.error('Sentence test result save failed:', error));
 	}
 </script>
 
