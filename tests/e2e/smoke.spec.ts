@@ -10,7 +10,7 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 	await page.getByRole('button', { name: '로그인' }).click();
 	await expect(page).toHaveURL(/\/app$/);
 
-	await page.getByRole('button', { name: '학습장 추가', exact: false }).click();
+	await page.getByRole('button', { name: '학습장 추가', exact: false }).first().click();
 	await expect(page).toHaveURL(/\/app\?create=1$/);
 	const createDialog = page.locator('dialog[aria-labelledby="study-create-title"]');
 	await expect(createDialog).toBeVisible();
