@@ -3,12 +3,13 @@ import {
 	deleteVocabulary,
 	getVocabulary,
 	listVocabularies,
+	atomicCreate,
 	uploadDirectory,
 	updateVocabulary
 } from './storage';
 import { MAX_TEST_HISTORY } from './storage';
 import { createTestSession, type Word } from '$lib/domain';
-import { access, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +37,15 @@ afterEach(async () => {
 });
 
 describe('filesystem storage', () => {
+	it('atomically creates bytes without replacing an existing file', async () => {
+		const path = join(directory, 'created.bin');
+		await atomicCreate(path, Buffer.from('first'));
+		await expect(atomicCreate(path, Buffer.from('second'))).rejects.toMatchObject({
+			code: 'EEXIST'
+		});
+		expect(await readFile(path, 'utf8')).toBe('first');
+	});
+
 	it('bounds persisted test history', async () => {
 		const vocabulary = await createVocabulary(userId, '기록 상한', '');
 		const now = new Date().toISOString();

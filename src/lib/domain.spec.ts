@@ -242,7 +242,19 @@ describe('results and OCR schema', () => {
 	});
 
 	it('removes words, finds orphan photos, recalculates counts, and keeps manual words', () => {
-		const result = removeWords(deletionVocabulary, new Set([words[0].id, words[1].id]));
+		const continuous = createTestSession(
+			[words[0]],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean',
+			Math.random,
+			{ phase: 'batch', batchSize: 1, daySize: 2, dayStart: 1, dayEnd: 2, studyMode: 'card' }
+		);
+		continuous.items[0].result = 'correct';
+		const result = removeWords(
+			{ ...deletionVocabulary, tests: [continuous] },
+			new Set([words[0].id, words[1].id])
+		);
 		expect(result.orphanImages.map(({ id }) => id)).toEqual([
 			'10000000-0000-4000-8000-000000000001'
 		]);
@@ -251,6 +263,8 @@ describe('results and OCR schema', () => {
 			{ number: 1, sourceImageId: '20000000-0000-4000-8000-000000000001' },
 			{ number: 2, sourceImageId: null }
 		]);
+		expect(result.vocabulary.tests[0]).not.toHaveProperty('continuous');
+		expect(result.vocabulary.tests[0].items[0].result).toBe('correct');
 	});
 
 	it('counts all four result states correctly', () => {
@@ -340,5 +354,16 @@ describe('results and OCR schema', () => {
 			expect(normalized, testCase.name).toMatchObject({ meaning: testCase.expectedMeaning });
 			expect(normalized.partOfSpeech, testCase.name).toBe(testCase.expectedPartOfSpeech);
 		}
+	});
+
+	it('normalizes Unicode width and every whitespace run in OCR fields', () => {
+		expect(
+			normalizeOcrEntry({
+				sourceOrder: 1,
+				english: ' ＡＢＣ\nword ',
+				meaning: ' 첫째\n뜻 ',
+				uncertain: false
+			})
+		).toMatchObject({ english: 'ABC word', meaning: '첫째 뜻' });
 	});
 });

@@ -1,5 +1,5 @@
 import { UserIndexSchema, VocabularySchema, type Vocabulary } from '$lib/domain';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getDataDir } from './config';
 
@@ -63,6 +63,50 @@ export async function atomicWrite(path: string, value: unknown) {
 		await rename(temporary, path);
 	} catch (error) {
 		await rm(temporary, { force: true });
+		throw error;
+	}
+	const directory = await open(dirname(path), 'r');
+	try {
+		await directory.sync();
+	} finally {
+		await directory.close();
+	}
+}
+
+export async function atomicCreate(path: string, value: Uint8Array) {
+	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+	const handle = await open(temporary, 'wx', 0o600);
+	try {
+		await handle.writeFile(value);
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+	let created = false;
+	try {
+		await link(temporary, path);
+		created = true;
+		try {
+			await unlink(temporary);
+		} catch (error) {
+			console.error('Atomic temp cleanup failed:', error);
+		}
+		const directory = await open(dirname(path), 'r');
+		try {
+			await directory.sync();
+		} finally {
+			await directory.close();
+		}
+	} catch (error) {
+		const cleanup = await Promise.allSettled([
+			unlink(temporary),
+			...(created ? [rm(path, { force: true })] : [])
+		]);
+		for (const result of cleanup) {
+			if (result.status === 'rejected')
+				console.error('Atomic create rollback failed:', result.reason);
+		}
 		throw error;
 	}
 }

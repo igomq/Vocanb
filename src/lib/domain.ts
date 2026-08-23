@@ -191,10 +191,11 @@ const relationNote =
 
 export function sanitizeWordField(value: string) {
 	return value
+		.normalize('NFKC')
 		.replaceAll('*', '')
 		.replaceAll('\u2022', '')
 		.replaceAll('\u00B7', '')
-		.replace(/\s{2,}/g, ' ')
+		.replace(/\s+/g, ' ')
 		.trim();
 }
 
@@ -217,6 +218,18 @@ export function normalizeOcrEntry(entry: OcrResponse['entries'][number]) {
 	return { ...entry, english, meaning, ...(partOfSpeech ? { partOfSpeech } : {}) };
 }
 
+export function clearContinuousLearningProgress(vocabulary: Vocabulary) {
+	return {
+		...vocabulary,
+		tests: vocabulary.tests.map((test) => {
+			if (!test.continuous) return test;
+			const history = { ...test };
+			delete history.continuous;
+			return history;
+		})
+	};
+}
+
 export function removeWords(vocabulary: Vocabulary, wordIds: ReadonlySet<string>) {
 	if (!wordIds.size) throw new Error('삭제할 단어를 선택해 주세요.');
 	const words = vocabulary.words.filter((word) => !wordIds.has(word.id));
@@ -237,7 +250,8 @@ export function removeWords(vocabulary: Vocabulary, wordIds: ReadonlySet<string>
 		vocabulary: {
 			...vocabulary,
 			words: words.map((word, index) => ({ ...word, number: index + 1 })),
-			images
+			images,
+			tests: clearContinuousLearningProgress(vocabulary).tests
 		},
 		orphanImages
 	};

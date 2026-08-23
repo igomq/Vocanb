@@ -107,7 +107,7 @@
 			<div class="progress-track" aria-hidden="true">
 				<div
 					class="progress-value"
-					style={`width: ${(evaluated / data.test.items.length) * 100}%`}
+					style={`transform: scaleX(${evaluated / data.test.items.length})`}
 				></div>
 			</div>
 		</div>

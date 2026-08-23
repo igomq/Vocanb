@@ -8,7 +8,7 @@
 	import PassageSummaryView from '$lib/components/PassageSummaryView.svelte';
 	import PassageTranslationView from '$lib/components/PassageTranslationView.svelte';
 	import SentenceTest from '$lib/components/SentenceTest.svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { SvelteMap } from 'svelte/reactivity';
 
 	let { data } = $props();
 
@@ -16,6 +16,11 @@
 	let activeIndex = $state(0);
 	let tab = $state<Tab>('passage');
 	let testResults = $state<Record<string, Record<string, SentenceTestResult>>>({});
+	let resultRevisions = $state<Record<string, number>>({});
+	let resultSaveError = $state('');
+	let resultSaveConflict = $state(false);
+	let savingResults = false;
+	const pendingResultSaves = new SvelteMap<string, Record<string, SentenceTestResult>>();
 	let syncedBookId = '';
 
 	$effect(() => {
@@ -23,6 +28,9 @@
 		syncedBookId = data.book.id;
 		testResults = Object.fromEntries(
 			data.book.passages.map((passage) => [passage.id, passage.testResults])
+		);
+		resultRevisions = Object.fromEntries(
+			data.book.passages.map((passage) => [passage.id, passage.testResultsRevision])
 		);
 	});
 
@@ -45,7 +53,7 @@
 		if (result) passageResults[key] = result;
 		else delete passageResults[key];
 		testResults = { ...testResults, [activePassage.id]: passageResults };
-		saveResults(passageResults);
+		saveResults(activePassage.id, passageResults);
 	}
 
 	function resetResults() {
@@ -54,23 +62,51 @@
 
 	function recordAllResults(results: Record<string, SentenceTestResult>) {
 		testResults = { ...testResults, [activePassage.id]: results };
-		saveResults(results);
+		saveResults(activePassage.id, results);
 	}
 
-	function saveResults(results: Record<string, SentenceTestResult>) {
-		void (async () => {
-			try {
+	function saveResults(passageId: string, results: Record<string, SentenceTestResult>) {
+		pendingResultSaves.set(passageId, results);
+		resultSaveError = '';
+		resultSaveConflict = false;
+		void flushResultSaves();
+	}
+
+	async function flushResultSaves() {
+		if (savingResults) return;
+		savingResults = true;
+		try {
+			while (pendingResultSaves.size) {
+				const [passageId, results] = pendingResultSaves.entries().next().value!;
+				pendingResultSaves.delete(passageId);
 				const response = await fetch(`/app/s/${data.book.id}/test-results`, {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ passageId: activePassage.id, results })
+					body: JSON.stringify({
+						passageId,
+						results,
+						revision: resultRevisions[passageId] ?? 0
+					})
 				});
-				if (!response.ok) throw new Error(`HTTP ${response.status}`);
-				await invalidateAll();
-			} catch (error) {
-				console.error('Sentence test result save failed:', error);
+				const body = await response.json().catch(() => null);
+				if (response.status === 409) {
+					pendingResultSaves.delete(passageId);
+					resultSaveConflict = true;
+					resultSaveError = body?.message || '다른 탭에서 결과가 변경되었습니다.';
+					continue;
+				}
+				if (!response.ok || !Number.isInteger(body?.revision)) {
+					if (!pendingResultSaves.has(passageId)) pendingResultSaves.set(passageId, results);
+					throw new Error(`HTTP ${response.status}`);
+				}
+				resultRevisions = { ...resultRevisions, [passageId]: body.revision };
 			}
-		})();
+		} catch (error) {
+			console.error('Sentence test result save failed:', error);
+			resultSaveError = '결과를 저장하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.';
+		} finally {
+			savingResults = false;
+		}
 	}
 </script>
 
@@ -86,6 +122,18 @@
 			<p class="page-description">강조된 문장을 가려 두고, 기억나는지 확인해 보세요.</p>
 		</div>
 	</header>
+
+	{#if resultSaveError}
+		<div class="message message-error" role="alert">
+			{resultSaveError}
+			<button
+				class="button button-quiet"
+				type="button"
+				onclick={() => (resultSaveConflict ? window.location.reload() : void flushResultSaves())}
+				>{resultSaveConflict ? '새로고침' : '다시 저장'}</button
+			>
+		</div>
+	{/if}
 
 	{#key activePassage.id}
 		<section class="sentence-stage" aria-label="지문 학습">

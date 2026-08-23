@@ -1147,7 +1147,8 @@ h2 {
 .progress-value {
 	height: 100%;
 	background: var(--accent);
-	transition: width 180ms ease;
+	transform-origin: left;
+	transition: transform 180ms ease;
 }
 
 .test-list {
@@ -1495,12 +1496,17 @@ h2 {
 	.app-sidebar {
 		width: min(86vw, 300px);
 		transform: translateX(-102%);
+		visibility: hidden;
 		box-shadow: 12px 0 32px rgb(31 35 41 / 14%);
-		transition: transform 180ms ease;
+		transition:
+			transform 180ms ease,
+			visibility 0s linear 180ms;
 	}
 
 	.app-sidebar.is-open {
 		transform: translateX(0);
+		visibility: visible;
+		transition-delay: 0s;
 	}
 
 	.drawer-scrim {
@@ -1796,6 +1802,10 @@ h2 {
 
 	.modal {
 		transform: none !important;
+	}
+
+	.app-sidebar {
+		transition-delay: 0s !important;
 	}
 
 	.pronunciation-guide {
@@ -2331,5 +2341,9 @@ h2 {
 
 	.sentence-test-rating {
 		margin-block: 0.2em;
+	}
+
+	.sentence-test-rating button {
+		min-height: 44px;
 	}
 }

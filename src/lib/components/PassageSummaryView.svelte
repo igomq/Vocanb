@@ -18,7 +18,7 @@
 	let error = $state('');
 
 	async function load() {
-		if (summary || loading || error) return;
+		if (summary || loading) return;
 		loading = true;
 		error = '';
 		try {

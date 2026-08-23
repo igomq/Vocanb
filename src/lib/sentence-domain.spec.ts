@@ -105,13 +105,14 @@ describe('sentence normalization', () => {
 		]);
 	});
 
-	it('drops whitespace-only runs', () => {
+	it('preserves whitespace runs that separate visible text', () => {
 		expect(
 			normalizeImportRuns([
-				{ text: '   ', memorize: false },
-				{ text: 'hi', memorize: true }
+				{ text: 'Hello', memorize: false },
+				{ text: ' ', memorize: false },
+				{ text: 'world', memorize: false }
 			])
-		).toEqual([{ text: 'hi', memorize: true }]);
+		).toEqual([{ text: 'Hello world', memorize: false }]);
 	});
 
 	it('absorbs punctuation touching a memorized span without dropping following text', () => {

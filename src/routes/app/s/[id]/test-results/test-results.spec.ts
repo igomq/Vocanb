@@ -23,12 +23,12 @@ async function createBook() {
 	});
 }
 
-function post(bookId: string, passageId: string, results: unknown) {
+function post(bookId: string, passageId: string, results: unknown, revision = 0) {
 	return POST({
 		request: new Request('http://localhost', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ passageId, results })
+			body: JSON.stringify({ passageId, results, revision })
 		}),
 		locals: { userId },
 		params: { id: bookId }
@@ -53,8 +53,21 @@ describe('sentence test results endpoint', () => {
 		expect(response.status).toBe(200);
 		expect((await getSentenceBook(userId, book.id))!.passages[0].testResults).toEqual(results);
 
-		await post(book.id, passageId, {});
+		await post(book.id, passageId, {}, 1);
 		expect((await getSentenceBook(userId, book.id))!.passages[0].testResults).toEqual({});
+	});
+
+	it('rejects a stale full-map save instead of overwriting newer results', async () => {
+		const book = await createBook();
+		const passageId = book.passages[0].id;
+		const newer = { '0:0': { status: 'correct', score: 100 } };
+		const stale = { '0:0': { status: 'wrong', score: 0 } };
+
+		expect((await post(book.id, passageId, newer, 0)).status).toBe(200);
+		expect((await post(book.id, passageId, stale, 0)).status).toBe(409);
+		const saved = (await getSentenceBook(userId, book.id))!.passages[0];
+		expect(saved.testResults).toEqual(newer);
+		expect(saved.testResultsRevision).toBe(1);
 	});
 
 	it('rejects malformed results and missing passages', async () => {

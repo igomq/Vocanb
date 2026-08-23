@@ -52,7 +52,8 @@ export const SentencePassageSchema = z
 		paragraphs: z.array(PassageParagraphSchema).min(1),
 		summary: PassageSummarySchema.nullable(),
 		translation: z.array(TranslationItemSchema).nullable(),
-		testResults: z.record(z.string(), SentenceTestResultSchema).default({})
+		testResults: z.record(z.string(), SentenceTestResultSchema).default({}),
+		testResultsRevision: z.number().int().nonnegative().default(0)
 	})
 	.strict()
 	.refine((passage) => passage.sourcePageStart <= passage.sourcePageEnd, {
@@ -121,7 +122,7 @@ export type PassageTranslationResponse = z.infer<typeof PassageTranslationRespon
 
 export type NormalizedSentencePassage = Omit<
 	SentencePassage,
-	'id' | 'order' | 'summary' | 'translation' | 'testResults'
+	'id' | 'order' | 'summary' | 'translation' | 'testResults' | 'testResultsRevision'
 >;
 
 const leadingPunctuation = /^[\p{P}]+/u;
@@ -131,7 +132,7 @@ const trailingPunctuation = /[\p{P}]+$/u;
 export function normalizeImportRuns(runs: MemorizationRun[]): MemorizationRun[] {
 	const merged: MemorizationRun[] = [];
 	for (const run of runs) {
-		if (!run.text.trim()) continue;
+		if (!run.text) continue;
 		let text = run.text;
 		let previous = merged.at(-1);
 
@@ -179,7 +180,7 @@ export function normalizeSentenceImport(
 			sourcePageEnd: passage.sourcePageEnd,
 			paragraphs: passage.paragraphs
 				.map((paragraph) => ({ runs: normalizeImportRuns(paragraph.runs) }))
-				.filter((paragraph) => paragraph.runs.length > 0)
+				.filter((paragraph) => paragraph.runs.some((run) => run.text.trim()))
 		}));
 	const usable = passages.filter((passage) => passage.paragraphs.length > 0);
 	if (!usable.length) throw new Error('PDF에서 지문을 찾지 못했습니다.');

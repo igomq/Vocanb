@@ -20,7 +20,7 @@ Install Node.js 24 LTS at a stable system path, create a non-login `vocanb` user
 
 Own app/data paths by `vocanb`; keep `/etc/vocanb` root-owned and runtime-readable only where required. Copy `ops/systemd/vocanb.service` to `/etc/systemd/system/`, then enable it after the first release.
 
-The runtime env must set `HOST=10.0.0.77`, `PORT=3000`, `PROTOCOL_HEADER=x-forwarded-proto`, `HOST_HEADER=x-forwarded-host`, `ORIGIN=https://<domain>`, `BODY_SIZE_LIMIT=92M`, the auth values, Vertex values, and `DATA_DIR=/var/lib/vocanb`. Keep the adapter limit above the app's 90MiB file-total limit so multipart overhead is not rejected before the upload action can validate or log it.
+The runtime env must set `HOST=10.0.0.77`, `PORT=3000`, `ADDRESS_HEADER=x-real-ip`, `PROTOCOL_HEADER=x-forwarded-proto`, `HOST_HEADER=x-forwarded-host`, `ORIGIN=https://<domain>`, `BODY_SIZE_LIMIT=92M`, the auth values, Vertex values, and `DATA_DIR=/var/lib/vocanb`. The service port must remain reachable only from the trusted Nginx host before accepting its address header. Keep the adapter limit above the app's 90MiB file-total limit so multipart overhead is not rejected before the upload action can validate or log it.
 
 ## 3. Route Nginx
 

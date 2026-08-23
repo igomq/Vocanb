@@ -189,3 +189,36 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 	await deleteVocabulary.click();
 	await expect(page).toHaveURL(/\/app$/);
 });
+
+test('keeps direct navigation contained and the mobile drawer out of focus', async ({ page }) => {
+	await page.goto('/login');
+	await page.getByLabel('아이디').fill('playwright');
+	await page.getByLabel('비밀번호').fill('playwright-password');
+	await page.getByRole('button', { name: '로그인' }).click();
+
+	for (const viewport of [
+		{ width: 320, height: 568 },
+		{ width: 375, height: 667 },
+		{ width: 390, height: 844 },
+		{ width: 430, height: 932 },
+		{ width: 768, height: 1024 }
+	]) {
+		await page.setViewportSize(viewport);
+		await page.goto('/app?create=1');
+		await expect(page.locator('dialog[aria-labelledby="study-create-title"]')).toBeVisible();
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+		).toBe(true);
+		await page.getByRole('button', { name: '닫기' }).click();
+		await expect(page).toHaveURL(/\/app$/);
+
+		const sidebar = page.locator('.app-sidebar');
+		expect(await sidebar.evaluate((element) => getComputedStyle(element).visibility)).toBe(
+			'hidden'
+		);
+		await page.getByRole('button', { name: '메뉴 열기' }).click();
+		await expect(sidebar).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(sidebar).toBeHidden();
+	}
+});

@@ -1,4 +1,5 @@
 import {
+	clearContinuousLearningProgress,
 	createTestSession,
 	latestCompletedResults,
 	latestCompletedTest,
@@ -16,9 +17,15 @@ import {
 } from '$lib/domain';
 import { normalizeUpload } from '$lib/server/image';
 import { mapWithConcurrency, ocrProvider } from '$lib/server/ocr';
-import { getVocabulary, imagePath, updateVocabulary, uploadDirectory } from '$lib/server/storage';
+import {
+	atomicCreate,
+	getVocabulary,
+	imagePath,
+	updateVocabulary,
+	uploadDirectory
+} from '$lib/server/storage';
 import { fail, redirect } from '@sveltejs/kit';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, params }) => {
@@ -223,7 +230,7 @@ export const actions: Actions = {
 			await mkdir(uploadDirectory(locals.userId!, params.id), { recursive: true, mode: 0o700 });
 			for (const image of prepared) {
 				const path = imagePath(locals.userId!, params.id, image.filename);
-				await writeFile(path, image.bytes, { flag: 'wx', mode: 0o600 });
+				await atomicCreate(path, image.bytes);
 				written.push(path);
 			}
 			await updateVocabulary(locals.userId!, params.id, (vocabulary) => {
@@ -381,7 +388,7 @@ export const actions: Actions = {
 	},
 	startTest: async ({ request, locals, params }) => {
 		const data = await request.formData();
-		let created: TestSession;
+		let created!: TestSession;
 		try {
 			const vocabulary = await getVocabulary(locals.userId!, params.id);
 			if (!vocabulary)
@@ -389,64 +396,66 @@ export const actions: Actions = {
 			const order = data.get('order') === 'random' ? 'random' : 'sequential';
 			const direction =
 				data.get('direction') === 'korean-to-english' ? 'korean-to-english' : 'english-to-korean';
-			if (data.get('continuous') === 'on') {
-				const settings = parseContinuousLearningSettings(
-					data.get('continuousBatchSize'),
-					data.get('continuousDaySize'),
-					data.get('continuousStudyMode')
-				);
-				const step = nextContinuousLearningStep(vocabulary, settings);
-				const range = step?.range;
-				const dayRange = step?.dayRange;
-				if (step?.status !== 'ready' || !step.phase || !range || !dayRange)
-					throw new Error('진행 중인 연속 학습 테스트를 먼저 완료해 주세요.');
-				const words = vocabulary.words.filter(
-					(word) => word.number >= range.start && word.number <= range.end
-				);
-				if (!words.length) throw new Error('테스트할 단어가 없습니다.');
-				created = createTestSession(words, range, order, direction, Math.random, {
-					phase: step.phase,
-					batchSize: step.settings.batchSize,
-					daySize: step.settings.daySize,
-					dayStart: dayRange.start,
-					dayEnd: dayRange.end,
-					studyMode: step.settings.studyMode
-				});
-			} else if (data.get('source') === 'recent-result') {
-				const latestResults = latestCompletedResults(vocabulary);
-				if (!latestResults.size) throw new Error('완료된 테스트 결과가 없습니다.');
-				const statusValues = data.getAll('statuses');
-				if (!statusValues.length) throw new Error('결과 상태를 하나 이상 선택해 주세요.');
-				const statuses = new Set<ResultStatus>();
-				for (const value of statusValues) {
-					const status = ResultStatusSchema.safeParse(value);
-					if (!status.success) throw new Error('결과 상태를 확인해 주세요.');
-					statuses.add(status.data);
-				}
-				const matchingWordIds = new Set(
-					[...latestResults].filter(([, result]) => statuses.has(result)).map(([wordId]) => wordId)
-				);
-				const words = vocabulary.words.filter((word) => matchingWordIds.has(word.id));
-				if (!words.length) throw new Error('선택한 결과의 단어가 없습니다.');
-				const numbers = words.map(({ number }) => number);
-				const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
-				created = createTestSession(words, range, order, direction);
-			} else if (data.get('source') === 'starred') {
-				const words = vocabulary.words.filter((word) => word.starred);
-				if (!words.length) throw new Error('별표한 단어가 없습니다.');
-				const numbers = words.map(({ number }) => number);
-				const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
-				created = createTestSession(words, range, order, direction);
-			} else {
-				const range = parseTestRange(
-					vocabulary.words,
-					data.get('all') === 'on',
-					data.get('start'),
-					data.get('end')
-				);
-				created = createTestSession(range.words, range, order, direction);
-			}
 			await updateVocabulary(locals.userId!, params.id, (current) => {
+				if (data.get('continuous') === 'on') {
+					const settings = parseContinuousLearningSettings(
+						data.get('continuousBatchSize'),
+						data.get('continuousDaySize'),
+						data.get('continuousStudyMode')
+					);
+					const step = nextContinuousLearningStep(current, settings);
+					const range = step?.range;
+					const dayRange = step?.dayRange;
+					if (step?.status !== 'ready' || !step.phase || !range || !dayRange)
+						throw new Error('진행 중인 연속 학습 테스트를 먼저 완료해 주세요.');
+					const words = current.words.filter(
+						(word) => word.number >= range.start && word.number <= range.end
+					);
+					if (!words.length) throw new Error('테스트할 단어가 없습니다.');
+					created = createTestSession(words, range, order, direction, Math.random, {
+						phase: step.phase,
+						batchSize: step.settings.batchSize,
+						daySize: step.settings.daySize,
+						dayStart: dayRange.start,
+						dayEnd: dayRange.end,
+						studyMode: step.settings.studyMode
+					});
+				} else if (data.get('source') === 'recent-result') {
+					const latestResults = latestCompletedResults(current);
+					if (!latestResults.size) throw new Error('완료된 테스트 결과가 없습니다.');
+					const statusValues = data.getAll('statuses');
+					if (!statusValues.length) throw new Error('결과 상태를 하나 이상 선택해 주세요.');
+					const statuses = new Set<ResultStatus>();
+					for (const value of statusValues) {
+						const status = ResultStatusSchema.safeParse(value);
+						if (!status.success) throw new Error('결과 상태를 확인해 주세요.');
+						statuses.add(status.data);
+					}
+					const matchingWordIds = new Set(
+						[...latestResults]
+							.filter(([, result]) => statuses.has(result))
+							.map(([wordId]) => wordId)
+					);
+					const words = current.words.filter((word) => matchingWordIds.has(word.id));
+					if (!words.length) throw new Error('선택한 결과의 단어가 없습니다.');
+					const numbers = words.map(({ number }) => number);
+					const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
+					created = createTestSession(words, range, order, direction);
+				} else if (data.get('source') === 'starred') {
+					const words = current.words.filter((word) => word.starred);
+					if (!words.length) throw new Error('별표한 단어가 없습니다.');
+					const numbers = words.map(({ number }) => number);
+					const range = { start: Math.min(...numbers), end: Math.max(...numbers) };
+					created = createTestSession(words, range, order, direction);
+				} else {
+					const range = parseTestRange(
+						current.words,
+						data.get('all') === 'on',
+						data.get('start'),
+						data.get('end')
+					);
+					created = createTestSession(range.words, range, order, direction);
+				}
 				current.tests.push(created);
 				return current;
 			});
@@ -460,14 +469,7 @@ export const actions: Actions = {
 	},
 	cancelContinuous: async ({ locals, params }) => {
 		try {
-			await updateVocabulary(locals.userId!, params.id, (vocabulary) => ({
-				...vocabulary,
-				tests: vocabulary.tests.map((test) => {
-					const history = { ...test };
-					delete history.continuous;
-					return history;
-				})
-			}));
+			await updateVocabulary(locals.userId!, params.id, clearContinuousLearningProgress);
 			return {
 				success: true,
 				action: 'cancelContinuous',

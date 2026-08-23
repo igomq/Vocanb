@@ -598,6 +598,42 @@ describe('test start action', () => {
 });
 
 describe('continuous learning actions', () => {
+	it('serializes duplicate starts so one continuous range has one active test', async () => {
+		const vocabulary = await createVocabulary(userId, '연속 중복 방지', '');
+		const now = new Date().toISOString();
+		await updateVocabulary(userId, vocabulary.id, (current) => ({
+			...current,
+			words: [1, 2].map((number) => ({
+				id: crypto.randomUUID(),
+				number,
+				english: `word-${number}`,
+				meaning: `뜻-${number}`,
+				sourceImageId: null,
+				uncertain: false,
+				starred: false,
+				createdAt: now,
+				updatedAt: now
+			}))
+		}));
+		const start = () => {
+			const form = new FormData();
+			form.set('continuous', 'on');
+			form.set('continuousBatchSize', '1');
+			form.set('continuousDaySize', '2');
+			form.set('continuousStudyMode', 'card');
+			return actions.startTest!({
+				request: new Request('http://localhost', { method: 'POST', body: form }),
+				locals: { userId },
+				params: { id: vocabulary.id }
+			} as never);
+		};
+
+		const starts = await Promise.allSettled([start(), start()]);
+		expect(starts.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+		expect(starts.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+		expect((await getVocabulary(userId, vocabulary.id))?.tests).toHaveLength(1);
+	});
+
 	it('clears only continuous metadata while preserving test history', async () => {
 		const vocabulary = await createVocabulary(userId, '연속 취소', '');
 		const now = new Date().toISOString();
