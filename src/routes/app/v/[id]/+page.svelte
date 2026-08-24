@@ -114,6 +114,10 @@
 	let deletePending = $state(false);
 	let bulkDeletePending = $state(false);
 	let selectionMode = $state(false);
+	let renameDialog: HTMLDialogElement | undefined = $state();
+	let renameTitle = $state('');
+	let renamePending = $state(false);
+	let renameError = $state('');
 	let selectedWordIds = new SvelteSet<string>();
 	let starredOnly = $state(false);
 	let pronunciationByWordKey = $state<Record<string, Pronunciation | null>>({});
@@ -608,6 +612,36 @@
 		wordDialog?.showModal();
 	}
 
+	function openRenameDialog() {
+		renameTitle = data.vocabulary.title;
+		renameError = '';
+		renameDialog?.showModal();
+	}
+
+	function closeRenameDialog() {
+		if (renameDialog?.open) renameDialog.close();
+	}
+
+	const enhanceRename: SubmitFunction = () => {
+		renamePending = true;
+		renameError = '';
+		return async ({ update, result }) => {
+			try {
+				await update();
+				if (result.type === 'success') {
+					closeRenameDialog();
+					return;
+				}
+				if (result.type === 'failure')
+					renameError =
+						(result.data as { message?: string })?.message ?? '이름을 변경하지 못했습니다.';
+			} catch {
+				renameError = '이름을 변경하지 못했습니다.';
+			} finally {
+				renamePending = false;
+			}
+		};
+	};
 	function closeWordDialog() {
 		if (wordDialog?.open) wordDialog.close();
 		editingWord = null;
@@ -738,6 +772,9 @@
 				</p>
 			</div>
 			<div class="button-row">
+				<button class="button button-secondary" type="button" onclick={openRenameDialog}>
+					이름 변경
+				</button>
 				<button
 					class="button button-primary"
 					type="button"
@@ -814,6 +851,9 @@
 
 		<div class:selection-mode={selectionMode} class="word-toolbar">
 			<div class="word-toolbar-left">
+				<button class="button button-secondary" type="button" onclick={openRenameDialog}>
+					이름 변경
+				</button>
 				<button
 					class="title-link"
 					type="button"
@@ -821,6 +861,9 @@
 					onclick={() => leaveDialog?.showModal()}>{data.vocabulary.title}</button
 				>
 				<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
+				<button class="button button-secondary" type="button" onclick={openRenameDialog}>
+					이름 변경
+				</button>
 				<button
 					class="button button-quiet star-filter"
 					type="button"
@@ -1290,6 +1333,48 @@
 	</div>
 </dialog>
 
+<dialog bind:this={renameDialog} class="modal" aria-labelledby="rename-vocabulary-title">
+	<div class="modal-body">
+		<div class="modal-header">
+			<div>
+				<h2 id="rename-vocabulary-title">암기장 이름 변경</h2>
+				<p>단어장 제목을 수정합니다.</p>
+			</div>
+			<button
+				class="modal-close"
+				type="button"
+				aria-label="닫기"
+				title="닫기"
+				onclick={closeRenameDialog}>×</button
+			>
+		</div>
+
+		<form class="form-stack" method="post" action="?/renameVocabulary" use:enhance={enhanceRename}>
+			<div class="field">
+				<label for="rename-title">이름</label>
+				<input
+					id="rename-title"
+					name="title"
+					maxlength="120"
+					bind:value={renameTitle}
+					autocomplete="off"
+					required
+				/>
+			</div>
+			{#if renameError}<p class="message message-error" role="alert" aria-live="assertive">
+					{renameError}
+				</p>{/if}
+			<div class="modal-actions">
+				<button class="button button-secondary" type="button" onclick={closeRenameDialog}
+					>취소</button
+				>
+				<button class="button button-primary" type="submit" disabled={renamePending}
+					>{renamePending ? '저장 중…' : '저장'}</button
+				>
+			</div>
+		</form>
+	</div>
+</dialog>
 <dialog bind:this={leaveDialog} class="modal" aria-labelledby="leave-vocabulary-title">
 	<div class="modal-body">
 		<div class="modal-header">

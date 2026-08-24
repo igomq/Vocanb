@@ -19,6 +19,7 @@ import { normalizeUpload } from '$lib/server/image';
 import { mapWithConcurrency, ocrProvider } from '$lib/server/ocr';
 import {
 	atomicCreate,
+	renameVocabulary,
 	getVocabulary,
 	imagePath,
 	updateVocabulary,
@@ -466,6 +467,22 @@ export const actions: Actions = {
 			});
 		}
 		redirect(303, `/app/v/${params.id}/test/${created.id}`);
+	},
+	renameVocabulary: async ({ request, locals, params }) => {
+		const title = String((await request.formData()).get('title') || '').trim();
+		try {
+			await renameVocabulary(locals.userId!, params.id, title);
+			return { success: true, action: 'renameVocabulary', message: '이름을 변경했습니다.' };
+		} catch (error) {
+			console.error(
+				'Vocabulary rename failed:',
+				error instanceof Error ? error.message : 'unknown error'
+			);
+			return fail(400, {
+				action: 'renameVocabulary',
+				message: '이름을 변경하지 못했습니다. 제목을 120자 이내로 입력해 주세요.'
+			});
+		}
 	},
 	cancelContinuous: async ({ locals, params }) => {
 		try {

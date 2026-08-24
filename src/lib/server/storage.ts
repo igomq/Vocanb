@@ -190,6 +190,14 @@ export async function deleteVocabulary(userId: string, vocabularyId: string) {
 	);
 }
 
+export async function renameVocabulary(userId: string, vocabularyId: string, title: string) {
+	const trimmed = title.trim();
+	if (!trimmed || trimmed.length > 120) throw new Error('제목을 120자 이내로 입력해 주세요.');
+	return updateVocabulary(userId, vocabularyId, (vocabulary) => {
+		vocabulary.title = trimmed;
+		return vocabulary;
+	});
+}
 export async function updateVocabulary(
 	userId: string,
 	vocabularyId: string,

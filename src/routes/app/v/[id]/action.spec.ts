@@ -684,3 +684,78 @@ describe('continuous learning actions', () => {
 		expect(saved?.tests.every((test) => !test.continuous)).toBe(true);
 	});
 });
+
+describe('vocabulary rename action', () => {
+	async function rename(vocabularyId: string, title: string) {
+		const form = new FormData();
+		form.set('title', title);
+		return actions.renameVocabulary!({
+			request: new Request('http://localhost', { method: 'POST', body: form }),
+			locals: { userId },
+			params: { id: vocabularyId }
+		} as never);
+	}
+
+	it('updates the title and preserves words, images, and tests', async () => {
+		const vocabulary = await createVocabulary(userId, '옛날 이름', 'Day 1');
+		await updateVocabulary(userId, vocabulary.id, (current) => {
+			const now = new Date().toISOString();
+			current.words = [
+				{
+					id: crypto.randomUUID(),
+					number: 1,
+					english: 'word',
+					meaning: '뜻',
+					sourceImageId: null,
+					uncertain: false,
+					starred: false,
+					createdAt: now,
+					updatedAt: now
+				}
+			];
+			current.images = [
+				{
+					id: crypto.randomUUID(),
+					filename: crypto.randomUUID() + '.jpg',
+					createdAt: now,
+					wordCount: 1
+				}
+			];
+			return current;
+		});
+
+		expect(await rename(vocabulary.id, '새 이름')).toMatchObject({
+			success: true,
+			action: 'renameVocabulary'
+		});
+		const saved = await getVocabulary(userId, vocabulary.id);
+		expect(saved?.title).toBe('새 이름');
+		expect(saved?.rangeLabel).toBe('Day 1');
+		expect(saved?.words).toHaveLength(1);
+		expect(saved?.images).toHaveLength(1);
+		expect(saved?.id).toBe(vocabulary.id);
+	});
+
+	it('trims whitespace and rejects empty or over-long titles', async () => {
+		const vocabulary = await createVocabulary(userId, '자르기', '');
+
+		expect(await rename(vocabulary.id, '   앞뒤공백   ')).toMatchObject({ success: true });
+		expect((await getVocabulary(userId, vocabulary.id))?.title).toBe('앞뒤공백');
+
+		expect(await rename(vocabulary.id, '   ')).toMatchObject({ status: 400 });
+		expect(await rename(vocabulary.id, 'x'.repeat(121))).toMatchObject({ status: 400 });
+		expect((await getVocabulary(userId, vocabulary.id))?.title).toBe('앞뒤공백');
+	});
+
+	it('fails for a missing vocabulary without mutating other vocabularies', async () => {
+		const other = await createVocabulary(userId, '다른 단어장', '');
+		expect(
+			await actions.renameVocabulary!({
+				request: new Request('http://localhost', { method: 'POST', body: new FormData() }),
+				locals: { userId },
+				params: { id: crypto.randomUUID() }
+			} as never)
+		).toMatchObject({ status: 400 });
+		expect((await getVocabulary(userId, other.id))?.title).toBe('다른 단어장');
+	});
+});
