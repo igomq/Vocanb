@@ -392,6 +392,24 @@ h2 {
 	color: var(--danger);
 }
 
+.rename-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-height: 32px;
+	border: 0;
+	background: transparent;
+	padding: 4px 6px;
+	color: var(--muted);
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 1;
+}
+
+.rename-action:hover {
+	color: var(--ink);
+}
+
 .icon-button {
 	display: inline-grid;
 	min-width: 44px;

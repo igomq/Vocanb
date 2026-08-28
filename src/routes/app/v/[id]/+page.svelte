@@ -772,9 +772,6 @@
 				</p>
 			</div>
 			<div class="button-row">
-				<button class="button button-secondary" type="button" onclick={openRenameDialog}>
-					이름 변경
-				</button>
 				<button
 					class="button button-primary"
 					type="button"
@@ -851,9 +848,6 @@
 
 		<div class:selection-mode={selectionMode} class="word-toolbar">
 			<div class="word-toolbar-left">
-				<button class="button button-secondary" type="button" onclick={openRenameDialog}>
-					이름 변경
-				</button>
 				<button
 					class="title-link"
 					type="button"
@@ -861,8 +855,8 @@
 					onclick={() => leaveDialog?.showModal()}>{data.vocabulary.title}</button
 				>
 				<span class="toolbar-meta">{data.vocabulary.words.length}개</span>
-				<button class="button button-secondary" type="button" onclick={openRenameDialog}>
-					이름 변경
+				<button class="rename-action" type="button" onclick={openRenameDialog}>
+					<span aria-hidden="true">✎</span> 이름 변경
 				</button>
 				<button
 					class="button button-quiet star-filter"

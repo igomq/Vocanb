@@ -86,6 +86,15 @@ export async function createSentenceBook(
 	});
 }
 
+export async function renameSentenceBook(userId: string, sentenceBookId: string, title: string) {
+	const trimmed = title.trim();
+	if (!trimmed || trimmed.length > 120) throw new Error('제목을 120자 이내로 입력해 주세요.');
+	return updateSentenceBook(userId, sentenceBookId, (book) => {
+		book.title = trimmed;
+		return book;
+	});
+}
+
 export async function updateSentenceBook(
 	userId: string,
 	sentenceBookId: string,

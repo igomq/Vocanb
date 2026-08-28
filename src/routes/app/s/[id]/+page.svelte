@@ -9,6 +9,8 @@
 	import PassageTranslationView from '$lib/components/PassageTranslationView.svelte';
 	import SentenceTest from '$lib/components/SentenceTest.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
+	import { enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
 
 	let { data } = $props();
 
@@ -19,6 +21,10 @@
 	let resultRevisions = $state<Record<string, number>>({});
 	let resultSaveError = $state('');
 	let resultSaveConflict = $state(false);
+	let renameDialog: HTMLDialogElement | undefined = $state();
+	let renameTitle = $state('');
+	let renamePending = $state(false);
+	let renameError = $state('');
 	let savingResults = false;
 	const pendingResultSaves = new SvelteMap<string, Record<string, SentenceTestResult>>();
 	let syncedBookId = '';
@@ -37,6 +43,37 @@
 	const passages = $derived(data.book.passages);
 	const activePassage = $derived(passages[activeIndex] as SentencePassage);
 	const nav = $derived(passageNavState(passages.length, activeIndex));
+
+	function openRenameDialog() {
+		renameTitle = data.book.title;
+		renameError = '';
+		renameDialog?.showModal();
+	}
+
+	function closeRenameDialog() {
+		if (renameDialog?.open) renameDialog.close();
+	}
+
+	const enhanceRename: SubmitFunction = () => {
+		renamePending = true;
+		renameError = '';
+		return async ({ update, result }) => {
+			try {
+				await update();
+				if (result.type === 'success') {
+					closeRenameDialog();
+					return;
+				}
+				if (result.type === 'failure')
+					renameError =
+						(result.data as { message?: string })?.message ?? '이름을 변경하지 못했습니다.';
+			} catch {
+				renameError = '이름을 변경하지 못했습니다.';
+			} finally {
+				renamePending = false;
+			}
+		};
+	};
 
 	function goTo(index: number) {
 		if (index < 0 || index >= passages.length) return;
@@ -120,6 +157,11 @@
 			<p class="eyebrow">문장 암기</p>
 			<h1>{data.book.title}</h1>
 			<p class="page-description">강조된 문장을 가려 두고, 기억나는지 확인해 보세요.</p>
+		</div>
+		<div class="button-row">
+			<button class="rename-action" type="button" onclick={openRenameDialog}>
+				<span aria-hidden="true">✎</span> 이름 변경
+			</button>
 		</div>
 	</header>
 
@@ -214,4 +256,51 @@
 			</div>
 		</section>
 	{/key}
+
+	<dialog bind:this={renameDialog} class="modal" aria-labelledby="rename-sentence-title">
+		<div class="modal-body">
+			<div class="modal-header">
+				<div>
+					<h2 id="rename-sentence-title">암기장 이름 변경</h2>
+					<p>문장 암기장 제목을 수정합니다.</p>
+				</div>
+				<button
+					class="modal-close"
+					type="button"
+					aria-label="닫기"
+					title="닫기"
+					onclick={closeRenameDialog}>×</button
+				>
+			</div>
+			<form
+				class="form-stack"
+				method="post"
+				action="?/renameSentenceBook"
+				use:enhance={enhanceRename}
+			>
+				<div class="field">
+					<label for="rename-title">이름</label>
+					<input
+						id="rename-title"
+						name="title"
+						maxlength="120"
+						bind:value={renameTitle}
+						autocomplete="off"
+						required
+					/>
+				</div>
+				{#if renameError}<p class="message message-error" role="alert" aria-live="assertive">
+						{renameError}
+					</p>{/if}
+				<div class="modal-actions">
+					<button class="button button-secondary" type="button" onclick={closeRenameDialog}
+						>취소</button
+					>
+					<button class="button button-primary" type="submit" disabled={renamePending}
+						>{renamePending ? '저장 중…' : '저장'}</button
+					>
+				</div>
+			</form>
+		</div>
+	</dialog>
 </div>
