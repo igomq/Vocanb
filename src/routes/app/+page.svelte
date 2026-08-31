@@ -5,8 +5,17 @@
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import type { ResolvedPathname } from '$app/types';
 	import CreateStudyDialog from '$lib/components/CreateStudyDialog.svelte';
+	import FolderPanel from '$lib/components/FolderPanel.svelte';
 
 	let { data, form } = $props();
+
+	type SidebarVocabulary = { id: string; title: string; rangeLabel: string };
+
+	const vocabularies = $derived(page.data.vocabularies as SidebarVocabulary[]);
+	const vocabularyItems = $derived(
+		vocabularies.map(({ id, title, rangeLabel }) => ({ id, title, meta: rangeLabel }))
+	);
+	const error = $derived((form as { message?: string } | null)?.message ?? '');
 
 	function createUrl(search: URLSearchParams): ResolvedPathname {
 		return `${resolve('/app')}?${search.toString()}` as ResolvedPathname;
@@ -36,9 +45,37 @@
 		</div>
 	</header>
 
-	{#if form?.message}
-		<p class="message message-error" role="alert" aria-live="assertive">{form.message}</p>
+	{#if error}
+		<p class="message message-error" role="alert" aria-live="assertive">{error}</p>
 	{/if}
+
+	<FolderPanel
+		kind="vocabulary"
+		folders={data.folders.vocabulary}
+		items={vocabularyItems}
+		labels={{
+			heading: '단어장 폴더',
+			item: '단어장',
+			empty: '아직 폴더가 없습니다. 위에서 이름을 정해 만들어 보세요.'
+		}}
+	/>
+
+	<FolderPanel
+		kind="sentence"
+		folders={data.folders.sentence}
+		items={page.data.sentenceBooks.map(
+			({ id, title, passageCount }: { id: string; title: string; passageCount: number }) => ({
+				id,
+				title,
+				meta: `지문 ${passageCount}개`
+			})
+		)}
+		labels={{
+			heading: '문장 암기 폴더',
+			item: '문장 암기장',
+			empty: '아직 폴더가 없습니다. 위에서 이름을 정해 만들어 보세요.'
+		}}
+	/>
 
 	{#if data.titles.length === 0 && page.data.sentenceBooks.length === 0}
 		<section class="empty-state" aria-labelledby="empty-title">
@@ -61,4 +98,4 @@
 	{/if}
 </div>
 
-<CreateStudyDialog titles={data.titles} ranges={data.ranges} />
+<CreateStudyDialog titles={data.titles} ranges={data.ranges} folders={data.folders} />

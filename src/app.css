@@ -2365,3 +2365,224 @@ h2 {
 		min-height: 44px;
 	}
 }
+.sidebar-folder-toggle {
+	width: 100%;
+	text-align: left;
+	border: 0;
+	background: transparent;
+	font: inherit;
+	cursor: pointer;
+}
+
+.sidebar-folder-items {
+	margin-left: 14px;
+	padding-left: 8px;
+	border-left: 1px solid var(--line);
+}
+
+.sidebar-folder-add {
+	min-height: 36px;
+	margin: 2px 10px 6px;
+	border: 1px dashed var(--line);
+	border-radius: 9px;
+	background: transparent;
+	padding: 0 10px;
+	color: var(--muted);
+	font-size: 13px;
+	text-align: left;
+}
+
+.sidebar-folder-add:hover {
+	background: #e8e9e6;
+	color: var(--ink);
+}
+
+.sidebar-folder-create {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	gap: 4px;
+	margin: 2px 10px 6px;
+}
+
+.sidebar-folder-input {
+	min-width: 0;
+	min-height: 36px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	padding: 0 8px;
+	color: var(--ink);
+	font-size: 13px;
+}
+
+.sidebar-folder-save,
+.sidebar-folder-cancel {
+	min-width: 36px;
+	min-height: 36px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: var(--ink);
+	font-size: 13px;
+}
+
+.sidebar-folder-cancel:hover {
+	background: #fff0ee;
+	color: var(--danger);
+}
+
+.folder-panel {
+	margin: 0 0 26px;
+	border: 1px solid var(--line);
+	border-radius: 14px;
+	background: var(--panel);
+	padding: 18px 20px 20px;
+}
+
+.folder-panel-head {
+	margin-bottom: 14px;
+}
+
+.folder-panel-head h2 {
+	margin: 0;
+	font-size: 16px;
+}
+
+.folder-panel-note,
+.folder-empty {
+	margin: 6px 0 0;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.55;
+}
+
+.folder-create {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-bottom: 16px;
+}
+
+.folder-create input {
+	flex: 1 1 200px;
+	min-width: 0;
+	min-height: 44px;
+	border: 1px solid var(--line);
+	border-radius: 9px;
+	background: var(--panel);
+	padding: 0 10px;
+	color: var(--ink);
+	font-size: 14px;
+}
+
+.folder-list {
+	display: grid;
+	gap: 12px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.folder-row {
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	padding: 12px 14px;
+}
+
+.folder-row-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.folder-name {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.folder-count {
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.folder-row-actions {
+	display: flex;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.folder-rename {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	flex: 1 1 240px;
+}
+
+.folder-rename input {
+	flex: 1 1 160px;
+	min-width: 0;
+	min-height: 40px;
+	border: 1px solid var(--line);
+	border-radius: 9px;
+	background: var(--panel);
+	padding: 0 10px;
+	color: var(--ink);
+	font-size: 14px;
+}
+
+.folder-items {
+	display: grid;
+	gap: 6px;
+	margin: 12px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.folder-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	border-top: 1px solid var(--line);
+	padding-top: 8px;
+}
+
+.folder-item:first-child {
+	border-top: 0;
+}
+
+.folder-item-title {
+	min-width: 0;
+	font-size: 14px;
+}
+
+.folder-item-meta {
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.folder-item-form {
+	margin-left: auto;
+}
+
+.folder-detach-form {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid var(--line);
+}
+
+.folder-detach-form select {
+	min-height: 40px;
+	border: 1px solid var(--line);
+	border-radius: 9px;
+	background: var(--panel);
+	padding: 0 8px;
+	color: var(--ink);
+	font-size: 14px;
+}

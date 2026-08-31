@@ -9,10 +9,18 @@
 
 	let {
 		titles = [] as string[],
-		ranges = [] as string[]
+		ranges = [] as string[],
+		folders = { vocabulary: [], sentence: [] } as {
+			vocabulary: { id: string; name: string }[];
+			sentence: { id: string; name: string }[];
+		}
 	}: {
 		titles?: string[];
 		ranges?: string[];
+		folders?: {
+			vocabulary: { id: string; name: string }[];
+			sentence: { id: string; name: string }[];
+		};
 	} = $props();
 
 	type Step = 'select' | 'vocabulary' | 'sentence';
@@ -183,6 +191,15 @@
 							placeholder="예: Unit 1–3"
 						/>
 					</div>
+					<div class="field">
+						<label for="vocabulary-folder">폴더 <span class="field-note">(선택)</span></label>
+						<select id="vocabulary-folder" name="folderId">
+							<option value="">폴더 없음</option>
+							{#each folders.vocabulary as folder (folder.id)}
+								<option value={folder.id}>{folder.name}</option>
+							{/each}
+						</select>
+					</div>
 					{#if vocabError}
 						<p class="message message-error" role="alert" aria-live="assertive">{vocabError}</p>
 					{/if}
@@ -231,6 +248,15 @@
 							accept="application/pdf,.pdf"
 							required
 						/>
+					</div>
+					<div class="field">
+						<label for="sentence-folder">폴더 <span class="field-note">(선택)</span></label>
+						<select id="sentence-folder" name="folderId">
+							<option value="">폴더 없음</option>
+							{#each folders.sentence as folder (folder.id)}
+								<option value={folder.id}>{folder.name}</option>
+							{/each}
+						</select>
 					</div>
 					{#if importError}
 						<p class="message message-error" role="alert" aria-live="assertive">{importError}</p>
