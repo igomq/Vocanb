@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import type { FolderKind } from '$lib/folders';
 
 	type Folder = { id: string; name: string; itemIds: string[] };
@@ -24,6 +25,9 @@
 		folders.find((folder) => folder.itemIds.includes(itemId))?.id ?? '';
 
 	const inFolder = (itemId: string) => folderOf(itemId) !== '';
+
+	const itemHref = (id: string) =>
+		kind === 'vocabulary' ? resolve('/app/v/[id]', { id }) : resolve('/app/s/[id]', { id });
 </script>
 
 <section class="folder-panel" aria-labelledby={`folder-heading-${kind}`}>
@@ -104,19 +108,27 @@
 					<ul class="folder-items">
 						{#each items as item (item.id)}
 							<li class="folder-item">
-								<span class="folder-item-title">{item.title}</span>
+								<a class="folder-item-title folder-item-link" href={itemHref(item.id)}
+									>{item.title}</a
+								>
 								{#if item.meta}<span class="folder-item-meta">{item.meta}</span>{/if}
-								<form class="folder-item-form" method="post" action="/app?/folder" use:enhance>
-									<input type="hidden" name="kind" value={kind} />
-									<input type="hidden" name="folderAction" value="setItem" />
-									<input type="hidden" name="itemId" value={item.id} />
-									<input type="hidden" name="folderId" value={folder.id} />
-									<button
-										class="button button-secondary"
-										type="submit"
-										disabled={folderOf(item.id) === folder.id}>이 폴더에 넣기</button
-									>
-								</form>
+								{#if folderOf(item.id) === folder.id}
+									<form class="folder-item-form" method="post" action="/app?/folder" use:enhance>
+										<input type="hidden" name="kind" value={kind} />
+										<input type="hidden" name="folderAction" value="setItem" />
+										<input type="hidden" name="itemId" value={item.id} />
+										<input type="hidden" name="folderId" value="" />
+										<button class="button button-secondary" type="submit">이 폴더에서 빼기</button>
+									</form>
+								{:else}
+									<form class="folder-item-form" method="post" action="/app?/folder" use:enhance>
+										<input type="hidden" name="kind" value={kind} />
+										<input type="hidden" name="folderAction" value="setItem" />
+										<input type="hidden" name="itemId" value={item.id} />
+										<input type="hidden" name="folderId" value={folder.id} />
+										<button class="button button-secondary" type="submit">이 폴더에 넣기</button>
+									</form>
+								{/if}
 							</li>
 						{/each}
 					</ul>

@@ -2558,6 +2558,19 @@ h2 {
 	font-size: 14px;
 }
 
+.folder-panel .button {
+	min-height: 0;
+	padding: 0.45em 0.85em;
+	font-size: 0.85em;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+a.folder-item-title:hover {
+	text-decoration: underline;
+	text-underline-offset: 0.15em;
+}
+
 .folder-item-meta {
 	color: var(--muted);
 	font-size: 12px;
