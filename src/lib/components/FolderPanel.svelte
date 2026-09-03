@@ -20,6 +20,16 @@
 
 	let newName = $state('');
 	let renaming = $state<{ id: string; name: string } | null>(null);
+	const PAGE = 5;
+	let pageBy = $state<Record<string, number>>({});
+
+	const pageOf = (id: string, total: number) =>
+		Math.min(pageBy[id] ?? 0, Math.max(0, Math.ceil(total / PAGE) - 1));
+
+	function turn(id: string, total: number, dir: 1 | -1) {
+		const max = Math.max(0, Math.ceil(total / PAGE) - 1);
+		pageBy[id] = Math.min(max, Math.max(0, pageOf(id, total) + dir));
+	}
 
 	const unfiledItems = $derived(
 		items.filter((item) => !folders.some((folder) => folder.itemIds.includes(item.id)))
@@ -56,6 +66,9 @@
 	{:else}
 		<ul class="folder-list">
 			{#each folders as folder (folder.id)}
+				{@const members = items.filter((item) => folder.itemIds.includes(item.id))}
+				{@const total = Math.max(1, Math.ceil(members.length / PAGE))}
+				{@const pg = pageOf(folder.id, members.length)}
 				<li class="folder-row">
 					<div class="folder-row-head">
 						{#if renaming?.id === folder.id}
@@ -105,7 +118,7 @@
 					</div>
 
 					<ul class="folder-items">
-						{#each items.filter((item) => folder.itemIds.includes(item.id)) as item (item.id)}
+						{#each members.slice(pg * PAGE, pg * PAGE + PAGE) as item (item.id)}
 							<li class="folder-item">
 								<a class="folder-item-title folder-item-link" href={itemHref(item.id)}
 									>{item.title}</a
@@ -123,6 +136,23 @@
 							<li class="folder-item-empty">아직 이 폴더에 든 {labels.item}이 없습니다.</li>
 						{/each}
 					</ul>
+					{#if total > 1}
+						<div class="folder-pager">
+							<button
+								type="button"
+								aria-label="이전 목록"
+								disabled={pg === 0}
+								onclick={() => turn(folder.id, members.length, -1)}>‹</button
+							>
+							<span>{pg + 1} / {total}</span>
+							<button
+								type="button"
+								aria-label="다음 목록"
+								disabled={pg === total - 1}
+								onclick={() => turn(folder.id, members.length, 1)}>›</button
+							>
+						</div>
+					{/if}
 					{#if items.some((item) => !folder.itemIds.includes(item.id))}
 						<form class="folder-add-form" method="post" action="/app?/folder" use:enhance>
 							<input type="hidden" name="kind" value={kind} />
@@ -145,13 +175,16 @@
 		</ul>
 
 		{#if unfiledItems.length}
+			{@const uKey = `unfiled:${kind}`}
+			{@const uTotal = Math.max(1, Math.ceil(unfiledItems.length / PAGE))}
+			{@const uPg = pageOf(uKey, unfiledItems.length)}
 			<div class="folder-row folder-unfiled">
 				<div class="folder-row-head">
 					<h3 class="folder-name">미분류</h3>
 					<span class="folder-count">{unfiledItems.length}개</span>
 				</div>
 				<ul class="folder-items">
-					{#each unfiledItems as item (item.id)}
+					{#each unfiledItems.slice(uPg * PAGE, uPg * PAGE + PAGE) as item (item.id)}
 						<li class="folder-item">
 							<a class="folder-item-title folder-item-link" href={itemHref(item.id)}>{item.title}</a
 							>
@@ -159,6 +192,23 @@
 						</li>
 					{/each}
 				</ul>
+				{#if uTotal > 1}
+					<div class="folder-pager">
+						<button
+							type="button"
+							aria-label="이전 목록"
+							disabled={uPg === 0}
+							onclick={() => turn(uKey, unfiledItems.length, -1)}>‹</button
+						>
+						<span>{uPg + 1} / {uTotal}</span>
+						<button
+							type="button"
+							aria-label="다음 목록"
+							disabled={uPg === uTotal - 1}
+							onclick={() => turn(uKey, unfiledItems.length, 1)}>›</button
+						>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	{/if}

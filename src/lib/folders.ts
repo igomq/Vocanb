@@ -64,6 +64,43 @@ export function pruneFolders(
 	};
 }
 
+/**
+ * Moves an item to folderId at a position, or out of every folder when folderId is null.
+ * beforeId must name an item already in the target folder; null appends to the end.
+ */
+export function moveFolderItem(
+	folders: FolderFile,
+	kind: FolderKind,
+	itemId: string,
+	folderId: string | null,
+	beforeId: string | null
+) {
+	if (folderId && !folders[kind].some((folder) => folder.id === folderId))
+		throw new Error('폴더를 찾을 수 없습니다.');
+	if (!folderId && beforeId) throw new Error('위치를 확인해 주세요.');
+	if (beforeId === itemId) return folders;
+	if (beforeId && !folders[kind].some((folder) => folder.itemIds.includes(beforeId)))
+		throw new Error('위치를 확인해 주세요.');
+	const stripped = folders[kind].map((folder) => ({
+		...folder,
+		itemIds: folder.itemIds.filter((id) => id !== itemId)
+	}));
+	if (!folderId) return { ...folders, [kind]: stripped };
+	const now = new Date().toISOString();
+	return {
+		...folders,
+		[kind]: stripped.map((folder) => {
+			if (folder.id !== folderId) return folder;
+			if (!beforeId) return { ...folder, itemIds: [...folder.itemIds, itemId], updatedAt: now };
+			const at = folder.itemIds.indexOf(beforeId);
+			return {
+				...folder,
+				itemIds: [...folder.itemIds.slice(0, at), itemId, ...folder.itemIds.slice(at)],
+				updatedAt: now
+			};
+		})
+	};
+}
 /** Moves an item to folderId, or out of every folder when it is null. */
 export function assignFolder(
 	folders: FolderFile,

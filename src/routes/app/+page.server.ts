@@ -10,6 +10,7 @@ import {
 	createFolder,
 	deleteFolder,
 	getFolders,
+	moveItemFolder,
 	renameFolder,
 	setItemFolder
 } from '$lib/server/folders';
@@ -201,6 +202,24 @@ export const actions: Actions = {
 			return fail(400, { message: '문장 암기장을 삭제하지 못했습니다.' });
 		}
 		redirect(303, '/app/s');
+	},
+	moveItem: async ({ request, locals }) => {
+		const data = await request.formData();
+		try {
+			const kind = readKind(data);
+			await moveItemFolder(
+				locals.userId!,
+				kind,
+				String(data.get('itemId') || ''),
+				String(data.get('folderId') || '').trim() || null,
+				String(data.get('beforeId') || '').trim() || null
+			);
+		} catch (error) {
+			return fail(400, {
+				message: error instanceof Error ? error.message : '이동하지 못했습니다.'
+			});
+		}
+		return { success: true };
 	},
 	folder: async ({ request, locals }) => {
 		const failure = await folderAction(request, locals.userId!);

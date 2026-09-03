@@ -11,6 +11,15 @@
 	let logoutPending = $state(false);
 	let openFolders = $state<Record<string, boolean>>({});
 	let folderDraft = $state<FolderKind | null>(null);
+	const PAGE_SIZE = 5;
+	let folderPage = $state<Record<string, number>>({});
+	let moving = $state<{ kind: FolderKind; id: string; title: string } | null>(null);
+	let dragging = $state<{ kind: FolderKind; id: string } | null>(null);
+	let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+	let moveKind = $state<FolderKind>('vocabulary');
+	let moveItemId = $state('');
+	let moveFolderId = $state('');
+	let moveBeforeId = $state('');
 
 	type Item = { id: string; title: string; meta: string };
 	type Group = {
@@ -81,9 +90,99 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') closeDrawer();
+		if (event.key !== 'Escape') return;
+		closeDrawer();
+		moving = null;
 	}
 
+	function pageOf(folderId: string, ids: string[]) {
+		const max = Math.max(0, Math.ceil(ids.length / PAGE_SIZE) - 1);
+		const saved = folderPage[folderId];
+		if (saved !== undefined) return Math.min(saved, max);
+		const ix = ids.indexOf(page.params.id ?? '');
+		return ix < 0 ? 0 : Math.min(Math.floor(ix / PAGE_SIZE), max);
+	}
+
+	function turnPage(folderId: string, ids: string[], dir: 1 | -1) {
+		const max = Math.max(0, Math.ceil(ids.length / PAGE_SIZE) - 1);
+		folderPage[folderId] = Math.min(max, Math.max(0, pageOf(folderId, ids) + dir));
+	}
+
+	function armHover(fn: () => void) {
+		if (hoverTimer !== null || !dragging) return;
+		hoverTimer = setTimeout(() => {
+			hoverTimer = null;
+			fn();
+		}, 650);
+	}
+
+	function clearHover() {
+		if (hoverTimer !== null) {
+			clearTimeout(hoverTimer);
+			hoverTimer = null;
+		}
+	}
+
+	function submitMove(
+		kind: FolderKind,
+		itemId: string,
+		folderId: string | null,
+		beforeId: string | null
+	) {
+		if (beforeId === itemId) return;
+		moveKind = kind;
+		moveItemId = itemId;
+		moveFolderId = folderId ?? '';
+		moveBeforeId = beforeId ?? '';
+		(document.getElementById('sidebar-move-form') as HTMLFormElement | null)?.requestSubmit();
+	}
+
+	function onDragStart(event: DragEvent, kind: FolderKind, item: Item) {
+		dragging = { kind, id: item.id };
+		event.dataTransfer?.setData('text/plain', `${kind}:${item.id}`);
+		if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+	}
+
+	function onDragEnd() {
+		dragging = null;
+		clearHover();
+	}
+
+	function onRowOver(event: DragEvent, kind: FolderKind) {
+		if (!dragging || dragging.kind !== kind) return;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+	}
+
+	function onRowDrop(
+		event: DragEvent,
+		kind: FolderKind,
+		folderId: string | null,
+		beforeId: string | null
+	) {
+		if (!dragging || dragging.kind !== kind) return;
+		event.preventDefault();
+		clearHover();
+		submitMove(kind, dragging.id, folderId, beforeId);
+	}
+
+	function onFolderOver(event: DragEvent, kind: FolderKind, folderId: string, itemIds: string[]) {
+		if (!dragging || dragging.kind !== kind) return;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+		if (!isOpen(folderId, itemIds)) armHover(() => (openFolders[folderId] = true));
+	}
+
+	function toggleMove(kind: FolderKind, item: Item) {
+		moving = moving?.id === item.id ? null : { kind, id: item.id, title: item.title };
+	}
+
+	const placeEnhance: SubmitFunction =
+		() =>
+		async ({ update }) => {
+			await update();
+			moving = null;
+		};
 	const enhanceLogout: SubmitFunction = () => {
 		logoutPending = true;
 		return async ({ update }) => {
@@ -126,6 +225,21 @@
 			</div>
 
 			<nav class="sidebar-nav" aria-label="학습장 목록">
+				{#if moving}
+					<div class="sidebar-moving">
+						<span class="sidebar-moving-title">‘{moving.title}’ 이동 중</span>
+						<form method="post" action="/app?/moveItem" use:enhance={placeEnhance}>
+							<input type="hidden" name="kind" value={moving.kind} />
+							<input type="hidden" name="itemId" value={moving.id} />
+							<input type="hidden" name="folderId" value="" />
+							<input type="hidden" name="beforeId" value="" />
+							<button class="sidebar-moving-btn" type="submit">미분류로 이동</button>
+						</form>
+						<button type="button" class="sidebar-moving-btn" onclick={() => (moving = null)}
+							>취소</button
+						>
+					</div>
+				{/if}
 				<p class="sidebar-section-label">단어장</p>
 				<a
 					class:is-active={page.url.pathname === '/app'}
@@ -143,13 +257,20 @@
 				</a>
 
 				{#each vocabularyGroup.folders as folder (folder.id)}
+					{@const p = pageOf(folder.id, folder.itemIds)}
+					{@const maxP = Math.max(0, Math.ceil(folder.itemIds.length / PAGE_SIZE) - 1)}
+					{@const shown = folder.items.slice(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE)}
 					<div class="sidebar-folder">
 						<div class="sidebar-item">
 							<button
 								class="sidebar-link sidebar-folder-toggle"
+								class:is-droppable={dragging?.kind === 'vocabulary'}
 								type="button"
 								aria-expanded={isOpen(folder.id, folder.itemIds)}
 								onclick={() => toggleFolder(folder.id, folder.itemIds)}
+								ondragover={(event) => onFolderOver(event, 'vocabulary', folder.id, folder.itemIds)}
+								ondragleave={clearHover}
+								ondrop={(event) => onRowDrop(event, 'vocabulary', folder.id, null)}
 							>
 								<span class="sidebar-link-index"
 									>{isOpen(folder.id, folder.itemIds) ? '▾' : '▸'}</span
@@ -177,12 +298,28 @@
 						</div>
 						{#if isOpen(folder.id, folder.itemIds)}
 							<div class="sidebar-folder-items">
-								{#each folder.items as item (item.id)}
+								{#each shown as item (item.id)}
+									{#if moving?.kind === 'vocabulary' && moving.id !== item.id}
+										<form
+											class="sidebar-place"
+											method="post"
+											action="/app?/moveItem"
+											use:enhance={placeEnhance}
+										>
+											<input type="hidden" name="kind" value="vocabulary" />
+											<input type="hidden" name="itemId" value={moving.id} />
+											<input type="hidden" name="folderId" value={folder.id} />
+											<input type="hidden" name="beforeId" value={item.id} />
+											<button class="sidebar-place-btn" type="submit">여기에 놓기</button>
+										</form>
+									{/if}
 									<div class="sidebar-item">
 										<a
 											class:is-active={isActive(item.id)}
 											class="sidebar-link"
 											href={itemHref('vocabulary', item.id)}
+											ondragover={(event) => onRowOver(event, 'vocabulary')}
+											ondrop={(event) => onRowDrop(event, 'vocabulary', folder.id, item.id)}
 											onclick={closeDrawer}
 											aria-current={isActive(item.id) ? 'page' : undefined}
 										>
@@ -192,6 +329,16 @@
 												{#if item.meta}<span class="sidebar-link-range">{item.meta}</span>{/if}
 											</span>
 										</a>
+										<button
+											class="sidebar-move"
+											type="button"
+											draggable="true"
+											title="끌거나 눌러서 순서 이동"
+											aria-label={`${item.title} 순서 이동`}
+											ondragstart={(event) => onDragStart(event, 'vocabulary', item)}
+											ondragend={onDragEnd}
+											onclick={() => toggleMove('vocabulary', item)}>⠿</button
+										>
 										<form
 											method="post"
 											action="/app?/deleteVocabulary"
@@ -209,6 +356,51 @@
 								{/each}
 								{#if !folder.items.length}
 									<p class="sidebar-empty">폴더가 비어 있습니다.</p>
+								{/if}
+								{#if moving?.kind === 'vocabulary'}
+									<form
+										class="sidebar-place"
+										method="post"
+										action="/app?/moveItem"
+										use:enhance={placeEnhance}
+									>
+										<input type="hidden" name="kind" value="vocabulary" />
+										<input type="hidden" name="itemId" value={moving.id} />
+										<input type="hidden" name="folderId" value={folder.id} />
+										<input type="hidden" name="beforeId" value="" />
+										<button class="sidebar-place-btn" type="submit">맨 뒤에 놓기</button>
+									</form>
+								{/if}
+								{#if maxP > 0}
+									<div class="sidebar-pager">
+										<button
+											type="button"
+											aria-label="이전 목록"
+											disabled={p === 0}
+											onclick={() => turnPage(folder.id, folder.itemIds, -1)}
+											ondragover={(event) => {
+												if (!dragging || dragging.kind !== 'vocabulary') return;
+												event.preventDefault();
+												armHover(() => turnPage(folder.id, folder.itemIds, -1));
+											}}
+											ondragleave={clearHover}
+											ondrop={clearHover}>‹</button
+										>
+										<span>{p + 1} / {maxP + 1}</span>
+										<button
+											type="button"
+											aria-label="다음 목록"
+											disabled={p === maxP}
+											onclick={() => turnPage(folder.id, folder.itemIds, 1)}
+											ondragover={(event) => {
+												if (!dragging || dragging.kind !== 'vocabulary') return;
+												event.preventDefault();
+												armHover(() => turnPage(folder.id, folder.itemIds, 1));
+											}}
+											ondragleave={clearHover}
+											ondrop={clearHover}>›</button
+										>
+									</div>
 								{/if}
 							</div>
 						{/if}
@@ -250,6 +442,8 @@
 							class:is-active={isActive(vocabulary.id)}
 							class="sidebar-link"
 							href={itemHref('vocabulary', vocabulary.id)}
+							ondragover={(event) => onRowOver(event, 'vocabulary')}
+							ondrop={(event) => onRowDrop(event, 'vocabulary', null, null)}
 							onclick={closeDrawer}
 							aria-current={isActive(vocabulary.id) ? 'page' : undefined}
 						>
@@ -259,6 +453,16 @@
 								{#if vocabulary.meta}<span class="sidebar-link-range">{vocabulary.meta}</span>{/if}
 							</span>
 						</a>
+						<button
+							class="sidebar-move"
+							type="button"
+							draggable="true"
+							title="끌거나 눌러서 순서 이동"
+							aria-label={`${vocabulary.title} 순서 이동`}
+							ondragstart={(event) => onDragStart(event, 'vocabulary', vocabulary)}
+							ondragend={onDragEnd}
+							onclick={() => toggleMove('vocabulary', vocabulary)}>⠿</button
+						>
 						<form
 							method="post"
 							action="/app?/deleteVocabulary"
@@ -295,13 +499,20 @@
 				</a>
 
 				{#each sentenceGroup.folders as folder (folder.id)}
+					{@const p = pageOf(folder.id, folder.itemIds)}
+					{@const maxP = Math.max(0, Math.ceil(folder.itemIds.length / PAGE_SIZE) - 1)}
+					{@const shown = folder.items.slice(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE)}
 					<div class="sidebar-folder">
 						<div class="sidebar-item">
 							<button
 								class="sidebar-link sidebar-folder-toggle"
+								class:is-droppable={dragging?.kind === 'sentence'}
 								type="button"
 								aria-expanded={isOpen(folder.id, folder.itemIds)}
 								onclick={() => toggleFolder(folder.id, folder.itemIds)}
+								ondragover={(event) => onFolderOver(event, 'sentence', folder.id, folder.itemIds)}
+								ondragleave={clearHover}
+								ondrop={(event) => onRowDrop(event, 'sentence', folder.id, null)}
 							>
 								<span class="sidebar-link-index"
 									>{isOpen(folder.id, folder.itemIds) ? '▾' : '▸'}</span
@@ -329,12 +540,28 @@
 						</div>
 						{#if isOpen(folder.id, folder.itemIds)}
 							<div class="sidebar-folder-items">
-								{#each folder.items as item (item.id)}
+								{#each shown as item (item.id)}
+									{#if moving?.kind === 'sentence' && moving.id !== item.id}
+										<form
+											class="sidebar-place"
+											method="post"
+											action="/app?/moveItem"
+											use:enhance={placeEnhance}
+										>
+											<input type="hidden" name="kind" value="sentence" />
+											<input type="hidden" name="itemId" value={moving.id} />
+											<input type="hidden" name="folderId" value={folder.id} />
+											<input type="hidden" name="beforeId" value={item.id} />
+											<button class="sidebar-place-btn" type="submit">여기에 놓기</button>
+										</form>
+									{/if}
 									<div class="sidebar-item">
 										<a
 											class:is-active={isActive(item.id)}
 											class="sidebar-link"
 											href={itemHref('sentence', item.id)}
+											ondragover={(event) => onRowOver(event, 'sentence')}
+											ondrop={(event) => onRowDrop(event, 'sentence', folder.id, item.id)}
 											onclick={closeDrawer}
 											aria-current={isActive(item.id) ? 'page' : undefined}
 										>
@@ -344,6 +571,16 @@
 												{#if item.meta}<span class="sidebar-link-range">{item.meta}</span>{/if}
 											</span>
 										</a>
+										<button
+											class="sidebar-move"
+											type="button"
+											draggable="true"
+											title="끌거나 눌러서 순서 이동"
+											aria-label={`${item.title} 순서 이동`}
+											ondragstart={(event) => onDragStart(event, 'sentence', item)}
+											ondragend={onDragEnd}
+											onclick={() => toggleMove('sentence', item)}>⠿</button
+										>
 										<form
 											method="post"
 											action="/app?/deleteSentenceBook"
@@ -361,6 +598,51 @@
 								{/each}
 								{#if !folder.items.length}
 									<p class="sidebar-empty">폴더가 비어 있습니다.</p>
+								{/if}
+								{#if moving?.kind === 'sentence'}
+									<form
+										class="sidebar-place"
+										method="post"
+										action="/app?/moveItem"
+										use:enhance={placeEnhance}
+									>
+										<input type="hidden" name="kind" value="sentence" />
+										<input type="hidden" name="itemId" value={moving.id} />
+										<input type="hidden" name="folderId" value={folder.id} />
+										<input type="hidden" name="beforeId" value="" />
+										<button class="sidebar-place-btn" type="submit">맨 뒤에 놓기</button>
+									</form>
+								{/if}
+								{#if maxP > 0}
+									<div class="sidebar-pager">
+										<button
+											type="button"
+											aria-label="이전 목록"
+											disabled={p === 0}
+											onclick={() => turnPage(folder.id, folder.itemIds, -1)}
+											ondragover={(event) => {
+												if (!dragging || dragging.kind !== 'sentence') return;
+												event.preventDefault();
+												armHover(() => turnPage(folder.id, folder.itemIds, -1));
+											}}
+											ondragleave={clearHover}
+											ondrop={clearHover}>‹</button
+										>
+										<span>{p + 1} / {maxP + 1}</span>
+										<button
+											type="button"
+											aria-label="다음 목록"
+											disabled={p === maxP}
+											onclick={() => turnPage(folder.id, folder.itemIds, 1)}
+											ondragover={(event) => {
+												if (!dragging || dragging.kind !== 'sentence') return;
+												event.preventDefault();
+												armHover(() => turnPage(folder.id, folder.itemIds, 1));
+											}}
+											ondragleave={clearHover}
+											ondrop={clearHover}>›</button
+										>
+									</div>
 								{/if}
 							</div>
 						{/if}
@@ -402,6 +684,8 @@
 							class:is-active={isActive(book.id)}
 							class="sidebar-link"
 							href={itemHref('sentence', book.id)}
+							ondragover={(event) => onRowOver(event, 'sentence')}
+							ondrop={(event) => onRowDrop(event, 'sentence', null, null)}
 							onclick={closeDrawer}
 							aria-current={isActive(book.id) ? 'page' : undefined}
 						>
@@ -411,6 +695,16 @@
 								{#if book.meta}<span class="sidebar-link-range">{book.meta}</span>{/if}
 							</span>
 						</a>
+						<button
+							class="sidebar-move"
+							type="button"
+							draggable="true"
+							title="끌거나 눌러서 순서 이동"
+							aria-label={`${book.title} 순서 이동`}
+							ondragstart={(event) => onDragStart(event, 'sentence', book)}
+							ondragend={onDragEnd}
+							onclick={() => toggleMove('sentence', book)}>⠿</button
+						>
 						<form
 							method="post"
 							action="/app?/deleteSentenceBook"
@@ -431,6 +725,20 @@
 				{/if}
 			</nav>
 
+			<form
+				id="sidebar-move-form"
+				class="visually-hidden"
+				method="post"
+				action="/app?/moveItem"
+				use:enhance
+				aria-hidden="true"
+				tabindex="-1"
+			>
+				<input type="hidden" name="kind" bind:value={moveKind} />
+				<input type="hidden" name="itemId" bind:value={moveItemId} />
+				<input type="hidden" name="folderId" bind:value={moveFolderId} />
+				<input type="hidden" name="beforeId" bind:value={moveBeforeId} />
+			</form>
 			<div class="sidebar-footer">
 				<form method="post" action="/logout" use:enhance={enhanceLogout}>
 					<button class="logout-button" type="submit" disabled={logoutPending}

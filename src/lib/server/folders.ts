@@ -3,6 +3,7 @@ import {
 	assignFolder,
 	emptyFolderFile,
 	folderName,
+	moveFolderItem,
 	type FolderFile,
 	type FolderKind
 } from '$lib/folders';
@@ -77,6 +78,23 @@ export async function deleteFolder(userId: string, kind: FolderKind, folderId: s
 			...folders,
 			[kind]: folders[kind].filter((folder) => folder.id !== folderId)
 		});
+	});
+}
+
+/** Moves an item to a folder position, or out of every folder when folderId is null. */
+export async function moveItemFolder(
+	userId: string,
+	kind: FolderKind,
+	itemId: string,
+	folderId: string | null,
+	beforeId: string | null
+) {
+	return withLock(userRoot(userId), async () => {
+		const folders = await read(userId);
+		await atomicWrite(
+			folderFilePath(userId),
+			moveFolderItem(folders, kind, safeId(itemId), folderId, beforeId)
+		);
 	});
 }
 
