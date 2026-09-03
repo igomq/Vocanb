@@ -139,6 +139,7 @@
 					{#if total > 1}
 						<div class="folder-pager">
 							<button
+								class="button button-quiet"
 								type="button"
 								aria-label="이전 목록"
 								disabled={pg === 0}
@@ -146,6 +147,7 @@
 							>
 							<span>{pg + 1} / {total}</span>
 							<button
+								class="button button-quiet"
 								type="button"
 								aria-label="다음 목록"
 								disabled={pg === total - 1}
@@ -195,6 +197,7 @@
 				{#if uTotal > 1}
 					<div class="folder-pager">
 						<button
+							class="button button-quiet"
 							type="button"
 							aria-label="이전 목록"
 							disabled={uPg === 0}
@@ -202,6 +205,7 @@
 						>
 						<span>{uPg + 1} / {uTotal}</span>
 						<button
+							class="button button-quiet"
 							type="button"
 							aria-label="다음 목록"
 							disabled={uPg === uTotal - 1}

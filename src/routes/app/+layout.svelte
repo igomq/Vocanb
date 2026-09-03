@@ -13,13 +13,14 @@
 	let folderDraft = $state<FolderKind | null>(null);
 	const PAGE_SIZE = 5;
 	let folderPage = $state<Record<string, number>>({});
-	let moving = $state<{ kind: FolderKind; id: string; title: string } | null>(null);
-	let dragging = $state<{ kind: FolderKind; id: string } | null>(null);
+	let moving = $state<{ kind: FolderKind; folderId: string; id: string } | null>(null);
+	let dragging = $state<{ kind: FolderKind; folderId: string; id: string } | null>(null);
 	let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 	let moveKind = $state<FolderKind>('vocabulary');
 	let moveItemId = $state('');
 	let moveFolderId = $state('');
 	let moveBeforeId = $state('');
+	let moveForm: HTMLFormElement | undefined = $state();
 
 	type Item = { id: string; title: string; meta: string };
 	type Group = {
@@ -109,7 +110,7 @@
 	}
 
 	function armHover(fn: () => void) {
-		if (hoverTimer !== null || !dragging) return;
+		if (hoverTimer !== null) return;
 		hoverTimer = setTimeout(() => {
 			hoverTimer = null;
 			fn();
@@ -123,22 +124,18 @@
 		}
 	}
 
-	function submitMove(
-		kind: FolderKind,
-		itemId: string,
-		folderId: string | null,
-		beforeId: string | null
-	) {
+	function submitMove(kind: FolderKind, itemId: string, folderId: string, beforeId: string | null) {
 		if (beforeId === itemId) return;
 		moveKind = kind;
 		moveItemId = itemId;
-		moveFolderId = folderId ?? '';
+		moveFolderId = folderId;
 		moveBeforeId = beforeId ?? '';
-		(document.getElementById('sidebar-move-form') as HTMLFormElement | null)?.requestSubmit();
+		queueMicrotask(() => moveForm?.requestSubmit());
 	}
 
-	function onDragStart(event: DragEvent, kind: FolderKind, item: Item) {
-		dragging = { kind, id: item.id };
+	function onDragStart(event: DragEvent, kind: FolderKind, folderId: string, item: Item) {
+		dragging = { kind, folderId, id: item.id };
+		moving = null;
 		event.dataTransfer?.setData('text/plain', `${kind}:${item.id}`);
 		if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
 	}
@@ -157,24 +154,30 @@
 	function onRowDrop(
 		event: DragEvent,
 		kind: FolderKind,
-		folderId: string | null,
+		folderId: string,
 		beforeId: string | null
 	) {
-		if (!dragging || dragging.kind !== kind) return;
+		if (!dragging || dragging.kind !== kind || dragging.folderId !== folderId) return;
 		event.preventDefault();
 		clearHover();
 		submitMove(kind, dragging.id, folderId, beforeId);
+		dragging = null;
 	}
 
-	function onFolderOver(event: DragEvent, kind: FolderKind, folderId: string, itemIds: string[]) {
-		if (!dragging || dragging.kind !== kind) return;
+	function onPagerOver(
+		event: DragEvent,
+		kind: FolderKind,
+		folderId: string,
+		ids: string[],
+		dir: 1 | -1
+	) {
+		if (!dragging || dragging.kind !== kind || dragging.folderId !== folderId) return;
 		event.preventDefault();
-		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-		if (!isOpen(folderId, itemIds)) armHover(() => (openFolders[folderId] = true));
+		armHover(() => turnPage(folderId, ids, dir));
 	}
 
-	function toggleMove(kind: FolderKind, item: Item) {
-		moving = moving?.id === item.id ? null : { kind, id: item.id, title: item.title };
+	function toggleMove(kind: FolderKind, folderId: string, item: Item) {
+		moving = moving?.id === item.id ? null : { kind, folderId, id: item.id };
 	}
 
 	const placeEnhance: SubmitFunction =
@@ -182,6 +185,7 @@
 		async ({ update }) => {
 			await update();
 			moving = null;
+			dragging = null;
 		};
 	const enhanceLogout: SubmitFunction = () => {
 		logoutPending = true;
@@ -225,21 +229,6 @@
 			</div>
 
 			<nav class="sidebar-nav" aria-label="학습장 목록">
-				{#if moving}
-					<div class="sidebar-moving">
-						<span class="sidebar-moving-title">‘{moving.title}’ 이동 중</span>
-						<form method="post" action="/app?/moveItem" use:enhance={placeEnhance}>
-							<input type="hidden" name="kind" value={moving.kind} />
-							<input type="hidden" name="itemId" value={moving.id} />
-							<input type="hidden" name="folderId" value="" />
-							<input type="hidden" name="beforeId" value="" />
-							<button class="sidebar-moving-btn" type="submit">미분류로 이동</button>
-						</form>
-						<button type="button" class="sidebar-moving-btn" onclick={() => (moving = null)}
-							>취소</button
-						>
-					</div>
-				{/if}
 				<p class="sidebar-section-label">단어장</p>
 				<a
 					class:is-active={page.url.pathname === '/app'}
@@ -264,13 +253,10 @@
 						<div class="sidebar-item">
 							<button
 								class="sidebar-link sidebar-folder-toggle"
-								class:is-droppable={dragging?.kind === 'vocabulary'}
+								class:is-drop={dragging?.kind === 'vocabulary' && dragging.folderId === folder.id}
 								type="button"
 								aria-expanded={isOpen(folder.id, folder.itemIds)}
 								onclick={() => toggleFolder(folder.id, folder.itemIds)}
-								ondragover={(event) => onFolderOver(event, 'vocabulary', folder.id, folder.itemIds)}
-								ondragleave={clearHover}
-								ondrop={(event) => onRowDrop(event, 'vocabulary', folder.id, null)}
 							>
 								<span class="sidebar-link-index"
 									>{isOpen(folder.id, folder.itemIds) ? '▾' : '▸'}</span
@@ -299,28 +285,27 @@
 						{#if isOpen(folder.id, folder.itemIds)}
 							<div class="sidebar-folder-items">
 								{#each shown as item (item.id)}
-									{#if moving?.kind === 'vocabulary' && moving.id !== item.id}
-										<form
-											class="sidebar-place"
-											method="post"
-											action="/app?/moveItem"
-											use:enhance={placeEnhance}
-										>
-											<input type="hidden" name="kind" value="vocabulary" />
-											<input type="hidden" name="itemId" value={moving.id} />
-											<input type="hidden" name="folderId" value={folder.id} />
-											<input type="hidden" name="beforeId" value={item.id} />
-											<button class="sidebar-place-btn" type="submit">여기에 놓기</button>
-										</form>
-									{/if}
-									<div class="sidebar-item">
+									<div class="sidebar-item is-reorder">
 										<a
 											class:is-active={isActive(item.id)}
+											class:is-drop={moving?.id === item.id || dragging?.id === item.id}
 											class="sidebar-link"
 											href={itemHref('vocabulary', item.id)}
 											ondragover={(event) => onRowOver(event, 'vocabulary')}
 											ondrop={(event) => onRowDrop(event, 'vocabulary', folder.id, item.id)}
-											onclick={closeDrawer}
+											onclick={(event) => {
+												if (
+													!moving ||
+													moving.kind !== 'vocabulary' ||
+													moving.folderId !== folder.id
+												) {
+													closeDrawer();
+													return;
+												}
+												event.preventDefault();
+												submitMove('vocabulary', moving.id, folder.id, item.id);
+												moving = null;
+											}}
 											aria-current={isActive(item.id) ? 'page' : undefined}
 										>
 											<span class="sidebar-link-index">·</span>
@@ -335,9 +320,9 @@
 											draggable="true"
 											title="끌거나 눌러서 순서 이동"
 											aria-label={`${item.title} 순서 이동`}
-											ondragstart={(event) => onDragStart(event, 'vocabulary', item)}
+											ondragstart={(event) => onDragStart(event, 'vocabulary', folder.id, item)}
 											ondragend={onDragEnd}
-											onclick={() => toggleMove('vocabulary', item)}>⠿</button
+											onclick={() => toggleMove('vocabulary', folder.id, item)}>⠿</button
 										>
 										<form
 											method="post"
@@ -357,20 +342,6 @@
 								{#if !folder.items.length}
 									<p class="sidebar-empty">폴더가 비어 있습니다.</p>
 								{/if}
-								{#if moving?.kind === 'vocabulary'}
-									<form
-										class="sidebar-place"
-										method="post"
-										action="/app?/moveItem"
-										use:enhance={placeEnhance}
-									>
-										<input type="hidden" name="kind" value="vocabulary" />
-										<input type="hidden" name="itemId" value={moving.id} />
-										<input type="hidden" name="folderId" value={folder.id} />
-										<input type="hidden" name="beforeId" value="" />
-										<button class="sidebar-place-btn" type="submit">맨 뒤에 놓기</button>
-									</form>
-								{/if}
 								{#if maxP > 0}
 									<div class="sidebar-pager">
 										<button
@@ -378,11 +349,8 @@
 											aria-label="이전 목록"
 											disabled={p === 0}
 											onclick={() => turnPage(folder.id, folder.itemIds, -1)}
-											ondragover={(event) => {
-												if (!dragging || dragging.kind !== 'vocabulary') return;
-												event.preventDefault();
-												armHover(() => turnPage(folder.id, folder.itemIds, -1));
-											}}
+											ondragover={(event) =>
+												onPagerOver(event, 'vocabulary', folder.id, folder.itemIds, -1)}
 											ondragleave={clearHover}
 											ondrop={clearHover}>‹</button
 										>
@@ -392,11 +360,8 @@
 											aria-label="다음 목록"
 											disabled={p === maxP}
 											onclick={() => turnPage(folder.id, folder.itemIds, 1)}
-											ondragover={(event) => {
-												if (!dragging || dragging.kind !== 'vocabulary') return;
-												event.preventDefault();
-												armHover(() => turnPage(folder.id, folder.itemIds, 1));
-											}}
+											ondragover={(event) =>
+												onPagerOver(event, 'vocabulary', folder.id, folder.itemIds, 1)}
 											ondragleave={clearHover}
 											ondrop={clearHover}>›</button
 										>
@@ -442,8 +407,6 @@
 							class:is-active={isActive(vocabulary.id)}
 							class="sidebar-link"
 							href={itemHref('vocabulary', vocabulary.id)}
-							ondragover={(event) => onRowOver(event, 'vocabulary')}
-							ondrop={(event) => onRowDrop(event, 'vocabulary', null, null)}
 							onclick={closeDrawer}
 							aria-current={isActive(vocabulary.id) ? 'page' : undefined}
 						>
@@ -453,16 +416,6 @@
 								{#if vocabulary.meta}<span class="sidebar-link-range">{vocabulary.meta}</span>{/if}
 							</span>
 						</a>
-						<button
-							class="sidebar-move"
-							type="button"
-							draggable="true"
-							title="끌거나 눌러서 순서 이동"
-							aria-label={`${vocabulary.title} 순서 이동`}
-							ondragstart={(event) => onDragStart(event, 'vocabulary', vocabulary)}
-							ondragend={onDragEnd}
-							onclick={() => toggleMove('vocabulary', vocabulary)}>⠿</button
-						>
 						<form
 							method="post"
 							action="/app?/deleteVocabulary"
@@ -506,13 +459,10 @@
 						<div class="sidebar-item">
 							<button
 								class="sidebar-link sidebar-folder-toggle"
-								class:is-droppable={dragging?.kind === 'sentence'}
+								class:is-drop={dragging?.kind === 'sentence' && dragging.folderId === folder.id}
 								type="button"
 								aria-expanded={isOpen(folder.id, folder.itemIds)}
 								onclick={() => toggleFolder(folder.id, folder.itemIds)}
-								ondragover={(event) => onFolderOver(event, 'sentence', folder.id, folder.itemIds)}
-								ondragleave={clearHover}
-								ondrop={(event) => onRowDrop(event, 'sentence', folder.id, null)}
 							>
 								<span class="sidebar-link-index"
 									>{isOpen(folder.id, folder.itemIds) ? '▾' : '▸'}</span
@@ -541,28 +491,27 @@
 						{#if isOpen(folder.id, folder.itemIds)}
 							<div class="sidebar-folder-items">
 								{#each shown as item (item.id)}
-									{#if moving?.kind === 'sentence' && moving.id !== item.id}
-										<form
-											class="sidebar-place"
-											method="post"
-											action="/app?/moveItem"
-											use:enhance={placeEnhance}
-										>
-											<input type="hidden" name="kind" value="sentence" />
-											<input type="hidden" name="itemId" value={moving.id} />
-											<input type="hidden" name="folderId" value={folder.id} />
-											<input type="hidden" name="beforeId" value={item.id} />
-											<button class="sidebar-place-btn" type="submit">여기에 놓기</button>
-										</form>
-									{/if}
-									<div class="sidebar-item">
+									<div class="sidebar-item is-reorder">
 										<a
 											class:is-active={isActive(item.id)}
+											class:is-drop={moving?.id === item.id || dragging?.id === item.id}
 											class="sidebar-link"
 											href={itemHref('sentence', item.id)}
 											ondragover={(event) => onRowOver(event, 'sentence')}
 											ondrop={(event) => onRowDrop(event, 'sentence', folder.id, item.id)}
-											onclick={closeDrawer}
+											onclick={(event) => {
+												if (
+													!moving ||
+													moving.kind !== 'sentence' ||
+													moving.folderId !== folder.id
+												) {
+													closeDrawer();
+													return;
+												}
+												event.preventDefault();
+												submitMove('sentence', moving.id, folder.id, item.id);
+												moving = null;
+											}}
 											aria-current={isActive(item.id) ? 'page' : undefined}
 										>
 											<span class="sidebar-link-index">·</span>
@@ -577,9 +526,9 @@
 											draggable="true"
 											title="끌거나 눌러서 순서 이동"
 											aria-label={`${item.title} 순서 이동`}
-											ondragstart={(event) => onDragStart(event, 'sentence', item)}
+											ondragstart={(event) => onDragStart(event, 'sentence', folder.id, item)}
 											ondragend={onDragEnd}
-											onclick={() => toggleMove('sentence', item)}>⠿</button
+											onclick={() => toggleMove('sentence', folder.id, item)}>⠿</button
 										>
 										<form
 											method="post"
@@ -599,20 +548,6 @@
 								{#if !folder.items.length}
 									<p class="sidebar-empty">폴더가 비어 있습니다.</p>
 								{/if}
-								{#if moving?.kind === 'sentence'}
-									<form
-										class="sidebar-place"
-										method="post"
-										action="/app?/moveItem"
-										use:enhance={placeEnhance}
-									>
-										<input type="hidden" name="kind" value="sentence" />
-										<input type="hidden" name="itemId" value={moving.id} />
-										<input type="hidden" name="folderId" value={folder.id} />
-										<input type="hidden" name="beforeId" value="" />
-										<button class="sidebar-place-btn" type="submit">맨 뒤에 놓기</button>
-									</form>
-								{/if}
 								{#if maxP > 0}
 									<div class="sidebar-pager">
 										<button
@@ -620,11 +555,8 @@
 											aria-label="이전 목록"
 											disabled={p === 0}
 											onclick={() => turnPage(folder.id, folder.itemIds, -1)}
-											ondragover={(event) => {
-												if (!dragging || dragging.kind !== 'sentence') return;
-												event.preventDefault();
-												armHover(() => turnPage(folder.id, folder.itemIds, -1));
-											}}
+											ondragover={(event) =>
+												onPagerOver(event, 'sentence', folder.id, folder.itemIds, -1)}
 											ondragleave={clearHover}
 											ondrop={clearHover}>‹</button
 										>
@@ -634,11 +566,8 @@
 											aria-label="다음 목록"
 											disabled={p === maxP}
 											onclick={() => turnPage(folder.id, folder.itemIds, 1)}
-											ondragover={(event) => {
-												if (!dragging || dragging.kind !== 'sentence') return;
-												event.preventDefault();
-												armHover(() => turnPage(folder.id, folder.itemIds, 1));
-											}}
+											ondragover={(event) =>
+												onPagerOver(event, 'sentence', folder.id, folder.itemIds, 1)}
 											ondragleave={clearHover}
 											ondrop={clearHover}>›</button
 										>
@@ -684,8 +613,6 @@
 							class:is-active={isActive(book.id)}
 							class="sidebar-link"
 							href={itemHref('sentence', book.id)}
-							ondragover={(event) => onRowOver(event, 'sentence')}
-							ondrop={(event) => onRowDrop(event, 'sentence', null, null)}
 							onclick={closeDrawer}
 							aria-current={isActive(book.id) ? 'page' : undefined}
 						>
@@ -695,16 +622,6 @@
 								{#if book.meta}<span class="sidebar-link-range">{book.meta}</span>{/if}
 							</span>
 						</a>
-						<button
-							class="sidebar-move"
-							type="button"
-							draggable="true"
-							title="끌거나 눌러서 순서 이동"
-							aria-label={`${book.title} 순서 이동`}
-							ondragstart={(event) => onDragStart(event, 'sentence', book)}
-							ondragend={onDragEnd}
-							onclick={() => toggleMove('sentence', book)}>⠿</button
-						>
 						<form
 							method="post"
 							action="/app?/deleteSentenceBook"
@@ -726,11 +643,11 @@
 			</nav>
 
 			<form
-				id="sidebar-move-form"
+				bind:this={moveForm}
 				class="visually-hidden"
 				method="post"
 				action="/app?/moveItem"
-				use:enhance
+				use:enhance={placeEnhance}
 				aria-hidden="true"
 				tabindex="-1"
 			>
