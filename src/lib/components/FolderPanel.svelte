@@ -21,10 +21,9 @@
 	let newName = $state('');
 	let renaming = $state<{ id: string; name: string } | null>(null);
 
-	const folderOf = (itemId: string) =>
-		folders.find((folder) => folder.itemIds.includes(itemId))?.id ?? '';
-
-	const inFolder = (itemId: string) => folderOf(itemId) !== '';
+	const unfiledItems = $derived(
+		items.filter((item) => !folders.some((folder) => folder.itemIds.includes(item.id)))
+	);
 
 	const itemHref = (id: string) =>
 		kind === 'vocabulary' ? resolve('/app/v/[id]', { id }) : resolve('/app/s/[id]', { id });
@@ -106,48 +105,61 @@
 					</div>
 
 					<ul class="folder-items">
-						{#each items as item (item.id)}
+						{#each items.filter((item) => folder.itemIds.includes(item.id)) as item (item.id)}
 							<li class="folder-item">
 								<a class="folder-item-title folder-item-link" href={itemHref(item.id)}
 									>{item.title}</a
 								>
 								{#if item.meta}<span class="folder-item-meta">{item.meta}</span>{/if}
-								{#if folderOf(item.id) === folder.id}
-									<form class="folder-item-form" method="post" action="/app?/folder" use:enhance>
-										<input type="hidden" name="kind" value={kind} />
-										<input type="hidden" name="folderAction" value="setItem" />
-										<input type="hidden" name="itemId" value={item.id} />
-										<input type="hidden" name="folderId" value="" />
-										<button class="button button-secondary" type="submit">이 폴더에서 빼기</button>
-									</form>
-								{:else}
-									<form class="folder-item-form" method="post" action="/app?/folder" use:enhance>
-										<input type="hidden" name="kind" value={kind} />
-										<input type="hidden" name="folderAction" value="setItem" />
-										<input type="hidden" name="itemId" value={item.id} />
-										<input type="hidden" name="folderId" value={folder.id} />
-										<button class="button button-secondary" type="submit">이 폴더에 넣기</button>
-									</form>
-								{/if}
+								<form class="folder-item-form" method="post" action="/app?/folder" use:enhance>
+									<input type="hidden" name="kind" value={kind} />
+									<input type="hidden" name="folderAction" value="setItem" />
+									<input type="hidden" name="itemId" value={item.id} />
+									<input type="hidden" name="folderId" value="" />
+									<button class="button button-secondary" type="submit">이 폴더에서 빼기</button>
+								</form>
 							</li>
+						{:else}
+							<li class="folder-item-empty">아직 이 폴더에 든 {labels.item}이 없습니다.</li>
 						{/each}
 					</ul>
+					{#if items.some((item) => !folder.itemIds.includes(item.id))}
+						<form class="folder-add-form" method="post" action="/app?/folder" use:enhance>
+							<input type="hidden" name="kind" value={kind} />
+							<input type="hidden" name="folderAction" value="setItem" />
+							<input type="hidden" name="folderId" value={folder.id} />
+							<select
+								name="itemId"
+								aria-label={`${folder.name} 폴더에 넣을 ${labels.item}`}
+								required
+							>
+								{#each items.filter((item) => !folder.itemIds.includes(item.id)) as item (item.id)}
+									<option value={item.id}>{item.title}</option>
+								{/each}
+							</select>
+							<button class="button button-secondary" type="submit">이 폴더에 넣기</button>
+						</form>
+					{/if}
 				</li>
 			{/each}
 		</ul>
-	{/if}
 
-	{#if items.some((item) => inFolder(item.id))}
-		<form class="folder-detach-form" method="post" action="/app?/folder" use:enhance>
-			<input type="hidden" name="kind" value={kind} />
-			<input type="hidden" name="folderAction" value="setItem" />
-			<input type="hidden" name="folderId" value="" />
-			<select name="itemId" aria-label={`폴더에서 꺼낼 ${labels.item}`} required>
-				{#each items.filter((item) => inFolder(item.id)) as item (item.id)}
-					<option value={item.id}>{item.title}</option>
-				{/each}
-			</select>
-			<button class="button button-quiet" type="submit">폴더에서 꺼내기</button>
-		</form>
+		{#if unfiledItems.length}
+			<div class="folder-row folder-unfiled">
+				<div class="folder-row-head">
+					<h3 class="folder-name">미분류</h3>
+					<span class="folder-count">{unfiledItems.length}개</span>
+				</div>
+				<ul class="folder-items">
+					{#each unfiledItems as item (item.id)}
+						<li class="folder-item">
+							<a class="folder-item-title folder-item-link" href={itemHref(item.id)}>{item.title}</a
+							>
+							{#if item.meta}<span class="folder-item-meta">{item.meta}</span>{/if}
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
 	{/if}
 </section>

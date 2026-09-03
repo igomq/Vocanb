@@ -2580,22 +2580,34 @@ a.folder-item-title:hover {
 	margin-left: auto;
 }
 
-.folder-detach-form {
+.folder-add-form {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 0.5em;
 	flex-wrap: wrap;
-	margin-top: 16px;
-	padding-top: 14px;
+	margin-top: 0.75em;
+	padding-top: 0.75em;
 	border-top: 1px solid var(--line);
 }
 
-.folder-detach-form select {
-	min-height: 40px;
+.folder-add-form select {
+	flex: 1 1 10em;
+	min-width: 0;
+	max-width: 100%;
+	min-height: 0;
+	padding: 0.45em 0.6em;
 	border: 1px solid var(--line);
-	border-radius: 9px;
+	border-radius: 0.6em;
 	background: var(--panel);
-	padding: 0 8px;
 	color: var(--ink);
-	font-size: 14px;
+	font-size: 0.85em;
+}
+
+.folder-item-empty {
+	color: var(--muted);
+	font-size: 0.85em;
+}
+
+.folder-unfiled {
+	margin-top: 0.75em;
 }
