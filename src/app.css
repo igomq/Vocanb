@@ -159,7 +159,7 @@ a {
 .sidebar-nav {
 	display: grid;
 	gap: 3px;
-	overflow: auto;
+	overflow: hidden auto;
 }
 
 .sidebar-item {
