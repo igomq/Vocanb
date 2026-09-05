@@ -16,7 +16,7 @@
 ## 기술 스택
 
 - SvelteKit 2, Svelte 5, TypeScript
-- Vertex AI (`gemini-3.6-flash`)
+- Vertex AI (`gemini-3.8-flash`)
 - adapter-node, Sharp, Zod
 - Vitest, Playwright, ESLint, Prettier
 
@@ -51,7 +51,7 @@ pnpm dev
 - `GOOGLE_CLOUD_LOCATION`: `global` 고정
 - `GOOGLE_APPLICATION_CREDENTIALS`: repository 밖의 서비스 계정 JSON 경로
 - `GOOGLE_GENAI_USE_VERTEXAI`: `true`
-- `VERTEX_MODEL`: `gemini-3.6-flash` 고정
+- `VERTEX_MODEL`: `gemini-3.8-flash` 고정
 - `DATA_DIR`: 배포와 분리된 영구 데이터 경로
 - `ORIGIN`: 외부 HTTPS origin
 - `BODY_SIZE_LIMIT`: adapter-node 요청 상한(배포값 `92M`; 앱의 사진 합계 90MiB보다 크게 유지)
