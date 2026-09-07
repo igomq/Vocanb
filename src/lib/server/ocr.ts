@@ -105,7 +105,7 @@ export class VertexOcrProvider implements OcrProvider {
 			name: failure?.name,
 			status: failure?.status ?? failure?.code,
 			message: failure?.name === 'ApiError' ? failure.message : undefined
-		});
+		}, lastError);
 		throw new Error('단어를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.', { cause: lastError });
 	}
 }

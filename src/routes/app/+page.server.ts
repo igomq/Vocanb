@@ -134,7 +134,7 @@ export const actions: Actions = {
 				fileSize: file.size,
 				providerErrorType: failure?.name,
 				providerStatus: failure?.status ?? failure?.code
-			});
+			}, error);
 			return fail(502, {
 				message:
 					error instanceof Error

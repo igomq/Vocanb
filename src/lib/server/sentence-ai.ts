@@ -201,7 +201,7 @@ export class VertexSentenceImportProvider implements SentenceImportProvider {
 				SENTENCE_IMPORT_TIMEOUT_MS
 			);
 		} catch (error) {
-			console.error('Sentence PDF analysis request failed:', describeError(error));
+			console.error('Sentence PDF analysis request failed:', describeError(error), error);
 			throw new Error('PDF를 분석하지 못했습니다. 잠시 후 다시 시도해 주세요.', { cause: error });
 		}
 		if (!response.text) throw new Error('PDF를 분석하지 못했습니다. 잠시 후 다시 시도해 주세요.');
@@ -210,7 +210,7 @@ export class VertexSentenceImportProvider implements SentenceImportProvider {
 			if (!parsed.passages.length) throw new Error('PDF에서 지문을 찾지 못했습니다.');
 			return parsed;
 		} catch (error) {
-			console.error('Sentence PDF analysis response validation failed:', describeError(error));
+			console.error('Sentence PDF analysis response validation failed:', describeError(error), error);
 			if (error instanceof Error && error.message === 'PDF에서 지문을 찾지 못했습니다.') {
 				throw error;
 			}
