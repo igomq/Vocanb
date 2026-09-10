@@ -8,6 +8,7 @@
 	import PassageSummaryView from '$lib/components/PassageSummaryView.svelte';
 	import PassageTranslationView from '$lib/components/PassageTranslationView.svelte';
 	import SentenceTest from '$lib/components/SentenceTest.svelte';
+	import SentenceChat from '$lib/components/SentenceChat.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
@@ -303,4 +304,5 @@
 			</form>
 		</div>
 	</dialog>
+	<SentenceChat bookId={data.book.id} passage={activePassage} />
 </div>
