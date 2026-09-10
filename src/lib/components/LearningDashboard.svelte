@@ -70,7 +70,7 @@
 			</p>
 		</div>
 		<div class="button-row">
-			<form method="post" action={startAction} use:enhance={enhanceStart}>
+			<form id="learn-start-form" method="post" action={startAction} use:enhance={enhanceStart}>
 				{#if vocabularyId}<input type="hidden" name="vocabularyId" value={vocabularyId} />{/if}
 				<button
 					class="button button-primary"
@@ -84,6 +84,21 @@
 			>
 		</div>
 	</div>
+
+	<fieldset class="choice-group learn-ai-limit">
+		<legend>AI 문제</legend>
+		<div class="choice-options">
+			<label class="choice"
+				><input type="radio" name="aiQuestionLimit" value="0" form="learn-start-form" /> 0</label
+			>
+			<label class="choice"
+				><input type="radio" name="aiQuestionLimit" value="4" form="learn-start-form" /> 4</label
+			>
+			<label class="choice"
+				><input type="radio" name="aiQuestionLimit" value="8" form="learn-start-form" checked /> 8</label
+			>
+		</div>
+	</fieldset>
 
 	<dl class="learn-metrics">
 		<div>
@@ -154,6 +169,16 @@
 		</div>
 		<form class="form-stack" method="post" action={cramAction} use:enhance={enhanceCram}>
 			{#if vocabularyId}<input type="hidden" name="vocabularyId" value={vocabularyId} />{/if}
+			<fieldset class="choice-group">
+				<legend>AI 문제</legend>
+				<div class="choice-options">
+					<label class="choice"><input type="radio" name="aiQuestionLimit" value="0" /> 0</label>
+					<label class="choice"><input type="radio" name="aiQuestionLimit" value="4" /> 4</label>
+					<label class="choice"
+						><input type="radio" name="aiQuestionLimit" value="8" checked /> 8</label
+					>
+				</div>
+			</fieldset>
 			<fieldset class="choice-group">
 				<legend>시간</legend>
 				<div class="choice-options">

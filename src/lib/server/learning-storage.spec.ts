@@ -1,7 +1,7 @@
 import { createTestSession, type Word } from '$lib/domain';
 import { emptyState, wordKey } from '$lib/learning';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -13,6 +13,7 @@ import {
 	readAdaptiveDocument,
 	syncLearning
 } from './learning-storage';
+import { createSentenceBook } from './sentence-storage';
 import { createVocabulary, getVocabulary, MAX_TEST_HISTORY, updateVocabulary } from './storage';
 
 const userId = 'u_0123456789abcdef0123456789abcdef';
@@ -156,5 +157,85 @@ describe('learning storage', () => {
 			accuracy: null
 		});
 		expect(emptyState('2026-09-10T00:00:00.000Z').reps).toBe(0);
+	});
+
+	it('mixes sentence passages into adaptive sessions and grades typed recall', async () => {
+		const vocabulary = await createVocabulary(userId, '추천', '');
+		await addWord(vocabulary.id, 'apple', '사과');
+		await createSentenceBook(userId, {
+			title: '문장',
+			sourceFileName: 'a.pdf',
+			passages: [
+				{
+					label: '1. 본문',
+					sourcePageStart: 1,
+					sourcePageEnd: 1,
+					paragraphs: [{ runs: [{ text: 'the idea', memorize: true }] }]
+				}
+			]
+		});
+		const session = await createLearningSession(userId, { mode: 'adaptive' });
+		const index = session.items.findIndex((item) => item.kind === 'sentence');
+		expect(index).toBeGreaterThanOrEqual(0);
+		expect(session.items[index].promptKind).toBe('recall');
+		expect(session.items[index].answer).toBe('the idea');
+		const correct = await evaluateLearningItem(userId, {
+			index,
+			typedAnswer: 'the idea'
+		});
+		expect(correct.items[index].result).toBe('correct');
+		const wrong = await evaluateLearningItem(userId, { index, typedAnswer: 'nope' });
+		expect(wrong.items[index].result).toBe('wrong');
+	});
+
+	it('loads old adaptive.json without settings and reports source due counts', async () => {
+		const vocabulary = await createVocabulary(userId, '단어장', '');
+		const apple = await addWord(vocabulary.id, 'apple', '사과');
+		const done = createTestSession(
+			[apple],
+			{ start: 1, end: 1 },
+			'sequential',
+			'english-to-korean'
+		);
+		done.items[0].result = 'wrong';
+		done.completedAt = '2026-09-01T00:00:00.000Z';
+		await updateVocabulary(userId, vocabulary.id, (current) => ({ ...current, tests: [done] }));
+		await writeFile(
+			join(directory, 'users', userId, 'adaptive.json'),
+			JSON.stringify({
+				schemaVersion: 1,
+				items: {},
+				confusion: [],
+				sessions: [],
+				appliedSessionIds: [],
+				appliedSignatures: {},
+				days: []
+			})
+		);
+		expect((await readAdaptiveDocument(userId)).settings).toBeUndefined();
+		await createSentenceBook(userId, {
+			title: '문장장',
+			sourceFileName: 'a.pdf',
+			passages: [
+				{
+					label: '1. 본문',
+					sourcePageStart: 1,
+					sourcePageEnd: 1,
+					paragraphs: [{ runs: [{ text: 'the idea', memorize: true }] }]
+				}
+			]
+		});
+		const snapshot = await getLearningSnapshot(userId);
+		expect(snapshot.sourceStats.find((item) => item.sourceId === vocabulary.id)).toMatchObject({
+			kind: 'word',
+			title: '단어장',
+			overdue: 1,
+			dueToday: 0
+		});
+		expect(snapshot.sourceStats.find((item) => item.kind === 'sentence')).toMatchObject({
+			title: '문장장',
+			overdue: 0,
+			dueToday: 0
+		});
 	});
 });

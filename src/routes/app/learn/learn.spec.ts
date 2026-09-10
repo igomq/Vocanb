@@ -114,4 +114,47 @@ describe('adaptive learn route', () => {
 			(await readAdaptiveDocument(userId)).sessions.some((session) => !session.completedAt)
 		).toBe(false);
 	});
+
+	it('starts with AI questions disabled', async () => {
+		await seed();
+		const start = new FormData();
+		start.set('aiQuestionLimit', '0');
+		await expect(
+			actions.start!({
+				request: new Request('http://localhost', { method: 'POST', body: start }),
+				locals: { userId }
+			} as never)
+		).rejects.toMatchObject({ status: 303, location: '/app/learn' });
+		const page = (await load!({
+			locals: { userId },
+			url: new URL('http://localhost/app/learn')
+		} as never))!;
+		expect(page.session?.items.length).toBeGreaterThan(0);
+	});
+
+	it('stores a typed answer with the rating', async () => {
+		await seed();
+		const start = new FormData();
+		await expect(
+			actions.start!({
+				request: new Request('http://localhost', { method: 'POST', body: start }),
+				locals: { userId }
+			} as never)
+		).rejects.toMatchObject({ status: 303 });
+		const form = new FormData();
+		form.set('index', '0');
+		form.set('result', 'correct');
+		form.set('typedAnswer', 'appel');
+		expect(
+			await actions.evaluate!({
+				request: new Request('http://localhost', { method: 'POST', body: form }),
+				locals: { userId }
+			} as never)
+		).toMatchObject({ success: true });
+		const page = (await load!({
+			locals: { userId },
+			url: new URL('http://localhost/app/learn')
+		} as never))!;
+		expect(page.session?.items[0]?.typedAnswer).toBe('appel');
+	});
 });

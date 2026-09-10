@@ -15,6 +15,7 @@ import {
 	pruneItems,
 	recordDaily,
 	sentenceKey,
+	sourceStatsFor,
 	summarizeDashboard,
 	wordKey,
 	sameCanonical,
@@ -23,6 +24,7 @@ import {
 	type DashboardData,
 	type LearningCandidate,
 	type QueueItem,
+	type SourceStat,
 	type ReviewGrade
 } from '$lib/learning';
 import type { TestSession, Vocabulary } from '$lib/domain';
@@ -244,6 +246,7 @@ export type LearningSnapshot = {
 	};
 	session: AdaptiveSession | null;
 	sourceId: string | null;
+	sourceStats: SourceStat[];
 };
 
 export async function getLearningSnapshot(
@@ -271,7 +274,8 @@ export async function getLearningSnapshot(
 			document.sessions.find(
 				(session) => !session.completedAt && (session.sourceId ?? null) === (sourceId ?? null)
 			) ?? null,
-		sourceId: sourceId ?? null
+		sourceId: sourceId ?? null,
+		sourceStats: sourceStatsFor(all, now)
 	};
 }
 
@@ -315,19 +319,18 @@ export async function createLearningSession(
 			(session.sourceId ?? null) === (input.sourceId ?? null)
 	);
 	if (existing) return existing;
-	const words = wordCandidates(
-		candidatesFor(synced.document, synced.vocabularies, synced.books, now),
-		input.sourceId
+	const selected = candidatesFor(synced.document, synced.vocabularies, synced.books, now).filter(
+		(item) => !input.sourceId || item.sourceId === input.sourceId
 	);
-	if (!words.length) throw new Error('추천할 단어가 없습니다.');
+	if (!selected.length) throw new Error('추천할 단어가 없습니다.');
 	const built =
 		input.mode === 'cram'
-			? buildCramQueue(words, now, {
+			? buildCramQueue(selected, now, {
 					minutes: input.minutes,
 					itemCount: input.itemCount,
 					pairs: synced.document.confusion
 				})
-			: buildQueue(words, now, { pairs: synced.document.confusion });
+			: buildQueue(selected, now, { pairs: synced.document.confusion });
 	if (!built.length) throw new Error('지금은 추천할 항목이 없습니다.');
 	const items = input.enrich ? await input.enrich(built) : built;
 	return withLock(adaptivePath(userId), async () => {
@@ -373,10 +376,10 @@ export async function evaluateLearningItem(
 		if (!session || !item) throw new Error('학습 항목을 찾을 수 없습니다.');
 		if (input.result === 'unknown' || input.result === 'ambiguous') {
 			item.result = input.result;
-		} else if (input.typedAnswer && item.promptKind !== 'recall') {
-			item.result = sameCanonical(input.typedAnswer, item.answer) ? 'correct' : 'wrong';
 		} else if (input.result) {
 			item.result = input.result;
+		} else if (input.typedAnswer) {
+			item.result = sameCanonical(input.typedAnswer, item.answer) ? 'correct' : 'wrong';
 		} else throw new Error('평가를 선택해 주세요.');
 		if (input.responseMs != null) item.responseMs = input.responseMs;
 		if (input.typedAnswer) item.typedAnswer = input.typedAnswer.slice(0, 300);

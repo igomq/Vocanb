@@ -130,7 +130,13 @@ export const AdaptiveDocumentSchema = z
 		sessions: z.array(AdaptiveSessionSchema).max(20),
 		appliedSessionIds: z.array(z.string().uuid()),
 		appliedSignatures: z.record(z.string(), z.string().max(400)),
-		days: z.array(DailyBucketSchema).max(14)
+		days: z.array(DailyBucketSchema).max(14),
+		settings: z
+			.object({
+				aiQuestionLimit: z.number().int().min(0).max(8).default(8)
+			})
+			.strict()
+			.optional()
 	})
 	.strict();
 export type AdaptiveDocument = z.infer<typeof AdaptiveDocumentSchema>;
@@ -170,6 +176,15 @@ export type DashboardData = {
 	nextReview: { date: string; count: number } | null;
 	trend: number[];
 	confusion: { left: string; right: string; count: number }[];
+};
+
+export type SourceStat = {
+	sourceId: string;
+	title: string;
+	kind: 'word' | 'sentence';
+	overdue: number;
+	dueToday: number;
+	recommended: number;
 };
 
 const ITEM_KEY = /^(word|sentence):([0-9a-f-]{36}):([0-9a-f-]{36})$/;
@@ -738,6 +753,15 @@ export function toQueueItem(
 		? item.reasons
 		: ([{ code: item.state.reps === 0 ? 'new' : 'low-mastery' }] as QueueReason[]);
 	const scored = { ...item, reasons };
+	if (item.kind === 'sentence') {
+		const excerpt = item.meaning.replace(/\s+/g, ' ').trim().slice(0, 80);
+		return {
+			...scored,
+			promptKind: 'recall',
+			prompt: `${item.english} · ${excerpt}`.slice(0, 4000),
+			answer: item.meaning
+		};
+	}
 	const sameSource = pool.filter((candidate) => candidate.sourceId === item.sourceId);
 	const distractors = pickDistractors(
 		item,
@@ -1043,6 +1067,33 @@ export function summarizeDashboard(
 			count: pair.count
 		}))
 	};
+}
+
+export function sourceStatsFor(candidates: LearningCandidate[], now: string): SourceStat[] {
+	const groups = new Map<string, LearningCandidate[]>();
+	for (const item of candidates) {
+		const list = groups.get(item.sourceId);
+		if (list) list.push(item);
+		else groups.set(item.sourceId, [item]);
+	}
+	return [...groups].map(([sourceId, items]) => {
+		let overdue = 0;
+		let dueToday = 0;
+		for (const item of items) {
+			if (item.state.reps === 0) continue;
+			const bucket = dueBucket(item.state.dueAt, now);
+			if (bucket === 'overdue') overdue += 1;
+			else if (bucket === 'due-today') dueToday += 1;
+		}
+		return {
+			sourceId,
+			title: items[0].sourceTitle,
+			kind: items[0].kind,
+			overdue,
+			dueToday,
+			recommended: buildQueue(items, now).length
+		};
+	});
 }
 
 export function pruneItems(items: Record<string, LearningState>, liveKeys: Iterable<string>) {

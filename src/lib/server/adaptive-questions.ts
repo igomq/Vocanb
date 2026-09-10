@@ -89,13 +89,15 @@ export async function vertexGenerateAdaptiveQuestions(
 export async function enrichQueueWithAi(
 	items: QueueItem[],
 	generate?: AdaptiveQuestionGenerator,
-	options?: { timeoutMs?: number; enabled?: boolean }
+	options?: { timeoutMs?: number; enabled?: boolean; limit?: number }
 ): Promise<QueueItem[]> {
 	if (!items.length) return items;
+	const limit = options?.limit ?? 8;
+	if (!limit) return items;
 	const enabled = options?.enabled ?? (Boolean(generate) || adaptiveAiEnabled());
 	if (!enabled) return items;
 	const runner = generate ?? vertexGenerateAdaptiveQuestions;
-	const slice = items.slice(0, 8);
+	const slice = items.slice(0, limit);
 	try {
 		const payload = await withTimeout(
 			runner(
@@ -107,7 +109,7 @@ export async function enrichQueueWithAi(
 			),
 			options?.timeoutMs ?? ADAPTIVE_AI_TIMEOUT_MS
 		);
-		return [...applyAiPrompts(slice, payload), ...items.slice(8)];
+		return [...applyAiPrompts(slice, payload), ...items.slice(limit)];
 	} catch (error) {
 		console.error('Adaptive question generation failed; using fallback prompts.', error);
 		return items;

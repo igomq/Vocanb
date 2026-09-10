@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	ADAPTIVE_QUEUE_SIZE,
+	AdaptiveDocumentSchema,
 	MAX_STABILITY_DAYS,
 	MIN_STABILITY_DAYS,
 	applyAiPrompt,
@@ -12,6 +13,7 @@ import {
 	confusionFromSession,
 	cramCapacity,
 	dueBucket,
+	emptyAdaptiveDocument,
 	emptyState,
 	formatReason,
 	gradeFromSentenceResults,
@@ -21,6 +23,8 @@ import {
 	recordDaily,
 	replayReviews,
 	seoulDateKey,
+	sentenceKey,
+	sourceStatsFor,
 	summarizeDashboard,
 	wordKey,
 	type LearningCandidate,
@@ -253,6 +257,28 @@ describe('priority and queue', () => {
 		expect(fromFirst).toBeGreaterThan(0);
 		expect(fromFirst).toBeLessThanOrEqual(12);
 	});
+
+	it('includes sentence candidates in the adaptive queue', () => {
+		const book = '30000000-0000-4000-8000-000000000003';
+		const passageId = id(9);
+		const items: LearningCandidate[] = [
+			candidate(1, reviewed('wrong', { dueAt: later(-48) })),
+			{
+				key: sentenceKey(book, passageId),
+				kind: 'sentence',
+				sourceId: book,
+				sourceTitle: '문장',
+				itemId: passageId,
+				english: '1. 본문',
+				meaning: 'the idea of freedom',
+				state: reviewed('wrong', { dueAt: later(-48) })
+			}
+		];
+		const sentence = buildQueue(items, NOW).find((item) => item.kind === 'sentence');
+		expect(sentence?.promptKind).toBe('recall');
+		expect(sentence?.prompt).toContain('1. 본문');
+		expect(sentence?.answer).toBe('the idea of freedom');
+	});
 });
 
 describe('cram mode', () => {
@@ -406,5 +432,32 @@ describe('stats guards', () => {
 		expect(dashboard.hardest?.label).toBe('adopt');
 		expect(dashboard.mostMissed?.label).toBe('adopt');
 		expect(dashboard.accuracy).toBe(0.5);
+	});
+
+	it('counts overdue and due-today per source from candidates', () => {
+		const items = [
+			candidate(1, reviewed('wrong', { dueAt: later(-48) })),
+			candidate(2, reviewed('correct', { dueAt: NOW, lastReviewedAt: later(-20) }))
+		];
+		const stats = sourceStatsFor(items, NOW);
+		expect(stats).toEqual([
+			expect.objectContaining({
+				sourceId: SOURCE,
+				kind: 'word',
+				overdue: 1,
+				dueToday: 1,
+				recommended: buildQueue(items, NOW).length
+			})
+		]);
+	});
+
+	it('parses adaptive documents that omit settings', () => {
+		expect(AdaptiveDocumentSchema.parse(emptyAdaptiveDocument()).settings).toBeUndefined();
+		expect(
+			AdaptiveDocumentSchema.parse({
+				...emptyAdaptiveDocument(),
+				settings: { aiQuestionLimit: 3 }
+			}).settings
+		).toEqual({ aiQuestionLimit: 3 });
 	});
 });

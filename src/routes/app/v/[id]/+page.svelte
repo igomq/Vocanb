@@ -71,7 +71,28 @@
 		}
 	}
 
+	function sourceDueStats(
+		page: { sourceStats?: unknown; learning?: { sourceStats?: unknown } },
+		vocabId: string
+	) {
+		const raw = page.sourceStats ?? page.learning?.sourceStats;
+		const rows = Array.isArray(raw) ? raw : [];
+		const stats = rows.find(
+			(row) => row && typeof row === 'object' && (row as { sourceId?: string }).sourceId === vocabId
+		) as { dueToday?: unknown; overdue?: unknown } | undefined;
+		const dueToday = Number(stats?.dueToday);
+		const overdue = Number(stats?.overdue);
+		if (!Number.isFinite(dueToday) || !Number.isFinite(overdue)) return null;
+		return { dueToday, overdue };
+	}
+
 	let { data, form } = $props();
+	const dueCounts = $derived(
+		sourceDueStats(
+			data as { sourceStats?: unknown; learning?: { sourceStats?: unknown } },
+			data.vocabulary.id
+		)
+	);
 	let filterAll = $state(true);
 	let selectedStatuses = new SvelteSet<ResultStatus>();
 	let testAll = $state(true);
@@ -956,6 +977,12 @@
 				{/if}
 			</div>
 		</div>
+
+		{#if dueCounts}
+			<section class="result-strip" aria-label="복습 현황">
+				<p class="result-summary">복습 {dueCounts.dueToday} · 기한 지남 {dueCounts.overdue}</p>
+			</section>
+		{/if}
 
 		{#if data.latestResult}
 			<section class="result-strip" aria-label="단어별 최근 결과">

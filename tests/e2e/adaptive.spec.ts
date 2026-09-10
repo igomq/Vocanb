@@ -38,6 +38,8 @@ async function answerOne(page: import('@playwright/test').Page) {
 	await expect(reveal.or(confirm).or(unknown).or(done)).toBeVisible();
 	if (await done.isVisible()) return 'done';
 	if (await reveal.isVisible()) {
+		const typed = page.locator('input[name="typedAnswer"]');
+		if (await typed.isVisible()) await typed.fill('apple');
 		await reveal.click();
 		await page.getByRole('button', { name: '맞음', exact: true }).click();
 		return 'answered';

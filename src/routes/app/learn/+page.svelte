@@ -179,38 +179,44 @@
 							>{pending ? '저장 중…' : '확인'}</button
 						>
 					</form>
-				{:else if current.result || revealedKeys.has(current.key)}
-					<div class="answer-block">
-						<span class="answer-label">정답</span>
-						<p class="answer-text">
-							{#if current.partOfSpeech}<span class="part-of-speech">{current.partOfSpeech}</span
-								>{/if}
-							{current.answer}
-						</p>
-						<form
-							class="evaluation-form"
-							method="post"
-							action="?/evaluate"
-							use:enhance={enhanceEval}
-						>
-							<input type="hidden" name="index" value={index} />
-							<input type="hidden" name="responseMs" value={Math.max(0, Date.now() - shownAt)} />
-							{#each statuses as status (status.value)}
-								<button
-									class:is-selected={current.result === status.value}
-									class="status-button"
-									type="submit"
-									name="result"
-									value={status.value}
-									disabled={pending}>{status.label}</button
-								>
-							{/each}
-						</form>
-					</div>
 				{:else}
-					<button class="reveal-button" type="button" onclick={() => revealedKeys.add(current.key)}
-						>정답 보기</button
-					>
+					<form class="form-stack" method="post" action="?/evaluate" use:enhance={enhanceEval}>
+						<input type="hidden" name="index" value={index} />
+						<input type="hidden" name="responseMs" value={Math.max(0, Date.now() - shownAt)} />
+						<label class="field" for="learn-typed"
+							>답
+							<input id="learn-typed" name="typedAnswer" bind:value={typed} autocomplete="off" />
+						</label>
+						{#if current.result || revealedKeys.has(current.key)}
+							<div class="answer-block">
+								<span class="answer-label">정답</span>
+								<p class="answer-text">
+									{#if current.partOfSpeech}<span class="part-of-speech"
+											>{current.partOfSpeech}</span
+										>{/if}
+									{current.answer}
+								</p>
+								<div class="evaluation-form">
+									{#each statuses as status (status.value)}
+										<button
+											class:is-selected={current.result === status.value}
+											class="status-button"
+											type="submit"
+											name="result"
+											value={status.value}
+											disabled={pending}>{status.label}</button
+										>
+									{/each}
+								</div>
+							</div>
+						{:else}
+							<button
+								class="reveal-button"
+								type="button"
+								onclick={() => revealedKeys.add(current.key)}>정답 보기</button
+							>
+						{/if}
+					</form>
 				{/if}
 			</section>
 		{/if}

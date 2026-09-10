@@ -2902,6 +2902,10 @@ a.folder-item-title:hover {
 	gap: 12px;
 }
 
+.learn-ai-limit {
+	margin-top: 12px;
+}
+
 .learn-metrics {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -5,15 +5,15 @@ import { enrichQueueWithAi, withTimeout } from './adaptive-questions';
 const SOURCE = '10000000-0000-4000-8000-000000000001';
 const WORD = '00000000-0000-4000-8000-000000000002';
 
-function item(): QueueItem {
+function item(english = 'adopt', id = WORD): QueueItem {
 	return toQueueItem(
 		{
-			key: wordKey(SOURCE, WORD),
+			key: wordKey(SOURCE, id),
 			kind: 'word',
 			sourceId: SOURCE,
 			sourceTitle: 't',
-			itemId: WORD,
-			english: 'adopt',
+			itemId: id,
+			english,
 			meaning: '채택하다',
 			state: emptyState('2026-09-09T15:00:00.000Z'),
 			score: 1,
@@ -60,5 +60,37 @@ describe('adaptive AI fallback', () => {
 		await expect(withTimeout(new Promise(() => undefined), 10)).rejects.toMatchObject({
 			name: 'TimeoutError'
 		});
+	});
+
+	it('skips generation when the limit is 0', async () => {
+		const original = item();
+		let called = 0;
+		const result = await enrichQueueWithAi(
+			[original],
+			async () => {
+				called += 1;
+				return { items: [] };
+			},
+			{ limit: 0 }
+		);
+		expect(called).toBe(0);
+		expect(result[0]).toEqual(original);
+	});
+
+	it('sends only the requested number of items to the generator', async () => {
+		const items = Array.from({ length: 9 }, (_, index) =>
+			item(`w${index}`, `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`)
+		);
+		let received = 0;
+		const result = await enrichQueueWithAi(
+			items,
+			async (words) => {
+				received = words.length;
+				return { items: [] };
+			},
+			{ limit: 4 }
+		);
+		expect(received).toBe(4);
+		expect(result).toHaveLength(9);
 	});
 });

@@ -21,6 +21,11 @@ function learnPath(sourceId: string | null) {
 	return sourceId ? `/app/learn?vocabularyId=${sourceId}` : '/app/learn';
 }
 
+function aiQuestionLimit(value: FormDataEntryValue | null) {
+	const limit = Number(value);
+	return limit === 0 || limit === 4 || limit === 8 ? limit : 8;
+}
+
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const sourceId = optionalId(url.searchParams.get('vocabularyId'));
 	return getLearningSnapshot(locals.userId!, sourceId);
@@ -34,7 +39,10 @@ export const actions: Actions = {
 			await createLearningSession(locals.userId!, {
 				mode: 'adaptive',
 				sourceId,
-				enrich: (items) => enrichQueueWithAi(items)
+				enrich: (items) =>
+					enrichQueueWithAi(items, undefined, {
+						limit: aiQuestionLimit(data.get('aiQuestionLimit'))
+					})
 			});
 		} catch (error) {
 			return fail(400, {
@@ -54,7 +62,10 @@ export const actions: Actions = {
 				sourceId,
 				itemCount: Number.isInteger(itemCount) && itemCount > 0 ? itemCount : undefined,
 				minutes: Number.isInteger(minutes) && minutes > 0 ? minutes : undefined,
-				enrich: (items) => enrichQueueWithAi(items)
+				enrich: (items) =>
+					enrichQueueWithAi(items, undefined, {
+						limit: aiQuestionLimit(data.get('aiQuestionLimit'))
+					})
 			});
 		} catch (error) {
 			return fail(400, {
