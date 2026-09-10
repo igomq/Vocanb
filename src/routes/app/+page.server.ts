@@ -16,6 +16,7 @@ import {
 } from '$lib/server/folders';
 import { createSentenceBook, deleteSentenceBook } from '$lib/server/sentence-storage';
 import { createVocabulary, deleteVocabulary, getSuggestions } from '$lib/server/storage';
+import { getLearningSnapshot } from '$lib/server/learning-storage';
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -23,8 +24,12 @@ const PDF_MAGIC = '%PDF-';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const userId = locals.userId!;
-	const [suggestions, folders] = await Promise.all([getSuggestions(userId), getFolders(userId)]);
-	return { ...suggestions, folders };
+	const [suggestions, folders, learning] = await Promise.all([
+		getSuggestions(userId),
+		getFolders(userId),
+		getLearningSnapshot(userId)
+	]);
+	return { ...suggestions, folders, learning };
 };
 
 function optionalFolderId(data: FormData) {

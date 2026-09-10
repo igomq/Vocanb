@@ -12,6 +12,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { page } from '$app/state';
 
 	let { data } = $props();
 
@@ -33,6 +34,10 @@
 	$effect(() => {
 		if (syncedBookId === data.book.id) return;
 		syncedBookId = data.book.id;
+		const index = data.book.passages.findIndex(
+			(passage) => passage.id === page.url.searchParams.get('passage')
+		);
+		activeIndex = index < 0 ? 0 : index;
 		testResults = Object.fromEntries(
 			data.book.passages.map((passage) => [passage.id, passage.testResults])
 		);

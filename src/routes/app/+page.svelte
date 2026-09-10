@@ -6,6 +6,7 @@
 	import type { ResolvedPathname } from '$app/types';
 	import CreateStudyDialog from '$lib/components/CreateStudyDialog.svelte';
 	import FolderPanel from '$lib/components/FolderPanel.svelte';
+	import LearningDashboard from '$lib/components/LearningDashboard.svelte';
 
 	let { data, form } = $props();
 
@@ -16,6 +17,7 @@
 		vocabularies.map(({ id, title, rangeLabel }) => ({ id, title, meta: rangeLabel }))
 	);
 	const error = $derived((form as { message?: string } | null)?.message ?? '');
+	const learned = $derived(page.url.searchParams.get('learned') === '1');
 
 	function createUrl(search: URLSearchParams): ResolvedPathname {
 		return `${resolve('/app')}?${search.toString()}` as ResolvedPathname;
@@ -47,6 +49,17 @@
 
 	{#if error}
 		<p class="message message-error" role="alert" aria-live="assertive">{error}</p>
+	{/if}
+
+	{#if learned}
+		<p class="message message-status" role="status">추천 학습을 완료했습니다.</p>
+	{/if}
+
+	{#if data.learning.dashboard.recommended || data.learning.dashboard.studiedToday || data.titles.length}
+		<LearningDashboard
+			dashboard={data.learning.dashboard}
+			sentenceDue={data.learning.sentenceDue}
+		/>
 	{/if}
 
 	<FolderPanel

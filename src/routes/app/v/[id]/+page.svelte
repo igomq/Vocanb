@@ -931,6 +931,11 @@
 							disabled={!data.vocabulary.words.length}
 							onclick={() => openTestSettings()}>테스트</button
 						>
+						<a
+							class="button button-secondary"
+							href="{resolve('/app/learn')}?vocabularyId={data.vocabulary.id}"
+							aria-disabled={!data.vocabulary.words.length}>추천 학습</a
+						>
 						{#if !data.continuous}
 							<button
 								class="button button-secondary"
