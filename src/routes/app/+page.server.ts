@@ -129,12 +129,16 @@ export const actions: Actions = {
 			imported = await sentenceImportProvider.extract(bytes);
 		} catch (error) {
 			const failure = error as { name?: string; status?: number; code?: number };
-			console.error('Sentence PDF analysis failed:', {
-				fileName: file.name,
-				fileSize: file.size,
-				providerErrorType: failure?.name,
-				providerStatus: failure?.status ?? failure?.code
-			}, error);
+			console.error(
+				'Sentence PDF analysis failed:',
+				{
+					fileName: file.name,
+					fileSize: file.size,
+					providerErrorType: failure?.name,
+					providerStatus: failure?.status ?? failure?.code
+				},
+				error
+			);
 			return fail(502, {
 				message:
 					error instanceof Error

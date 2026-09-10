@@ -210,7 +210,11 @@ export class VertexSentenceImportProvider implements SentenceImportProvider {
 			if (!parsed.passages.length) throw new Error('PDF에서 지문을 찾지 못했습니다.');
 			return parsed;
 		} catch (error) {
-			console.error('Sentence PDF analysis response validation failed:', describeError(error), error);
+			console.error(
+				'Sentence PDF analysis response validation failed:',
+				describeError(error),
+				error
+			);
 			if (error instanceof Error && error.message === 'PDF에서 지문을 찾지 못했습니다.') {
 				throw error;
 			}
