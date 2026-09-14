@@ -11,7 +11,11 @@ vi.mock('./config', () => ({
 	getVertexConfig: () => ({ project: 'test', location: 'global', model: 'gemini-3.8-flash' })
 }));
 
-import { SENTENCE_IMPORT_TIMEOUT_MS, VertexSentenceImportProvider } from './sentence-ai';
+import {
+	SENTENCE_IMPORT_TIMEOUT_MS,
+	VertexSentenceImportProvider,
+	generatePassageChatAnswer
+} from './sentence-ai';
 
 const imported = {
 	passages: [
@@ -33,6 +37,30 @@ beforeEach(() => {
 afterEach(() => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
+});
+
+it('sends vocabulary and analysis follow-ups with a tutoring policy instead of passage-only refusal', async () => {
+	generateContent.mockResolvedValue({
+		text: '  여기서 to study는 목적을 나타내는 부사적 용법입니다.  '
+	});
+	const passage = 'She went to the library to study.';
+	const messages = [
+		{ role: 'user' as const, content: '지문에 없는 resilient 뜻도 알려줘.' },
+		{ role: 'assistant' as const, content: '회복력이 있는, 잘 견디는이라는 뜻입니다.' },
+		{ role: 'user' as const, content: 'to study가 명사적 용법이라는 내 분석이 맞아?' }
+	];
+	expect(await generatePassageChatAnswer(passage, messages)).toBe(
+		'여기서 to study는 목적을 나타내는 부사적 용법입니다.'
+	);
+	const request = generateContent.mock.calls[0][0];
+	expect(
+		request.contents.map((message: { parts: { text: string }[] }) => message.parts[0].text)
+	).toEqual(messages.map((message) => message.content));
+	expect(request.config.systemInstruction).toContain('using your general knowledge');
+	expect(request.config.systemInstruction).toContain('correct mistakes');
+	expect(request.config.systemInstruction).toContain(JSON.stringify(passage));
+	expect(request.config.systemInstruction).not.toContain('reply exactly');
+	expect(request.config.systemInstruction).not.toContain('이 지문에서 확인할 수 없는 내용입니다.');
 });
 
 describe('PDF analysis request deadlines', () => {
