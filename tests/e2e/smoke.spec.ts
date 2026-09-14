@@ -222,3 +222,108 @@ test('keeps direct navigation contained and the mobile drawer out of focus', asy
 		await expect(sidebar).toBeHidden();
 	}
 });
+
+test('shows cross-page creation failures without losing the PDF or dialog', async ({ page }) => {
+	await page.goto('/login');
+	await page.getByLabel('아이디').fill('playwright');
+	await page.getByLabel('비밀번호').fill('playwright-password');
+	await page.getByRole('button', { name: '로그인' }).click();
+	await page.goto('/app/s?create=1&type=sentence');
+	const dialog = page.locator('dialog[aria-labelledby="study-create-title"]');
+	await dialog.getByLabel('PDF 파일').setInputFiles({
+		name: 'invalid.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from('invalid PDF')
+	});
+	await dialog.getByRole('button', { name: '문장 암기장 만들기', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toContainText('PDF 파일만 업로드할 수 있습니다.');
+	await expect(dialog.getByLabel('PDF 파일')).toHaveValue(/invalid.pdf$/);
+	await expect(dialog).toBeVisible();
+});
+
+test('keeps PDF analysis visible through navigation and reports broken connections', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/login');
+	await page.getByLabel('아이디').fill('playwright');
+	await page.getByLabel('비밀번호').fill('playwright-password');
+	await page.getByRole('button', { name: '로그인' }).click();
+	await page.goto('/app/s?create=1&type=sentence');
+	const dialog = page.locator('dialog[aria-labelledby="study-create-title"]');
+	await dialog.getByLabel('제목').fill('선택한 제목');
+	await dialog.getByLabel('PDF 파일').setInputFiles({
+		name: 'sample.pdf',
+		mimeType: 'application/pdf',
+		buffer: Buffer.from('%PDF-1.4 mock')
+	});
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let intercepted!: () => void;
+	const started = new Promise<void>((resolve) => {
+		intercepted = resolve;
+	});
+	let requests = 0;
+	await page.route('**/app/s/import', async (route) => {
+		requests += 1;
+		intercepted();
+		await held;
+		await route.fulfill({
+			status: 504,
+			contentType: 'text/html',
+			body: '<h1>Gateway timeout</h1>'
+		});
+	});
+	try {
+		await dialog.getByRole('button', { name: '문장 암기장 만들기', exact: true }).click();
+		await started;
+		await expect(dialog.getByRole('status')).toContainText('PDF 분석 중');
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeVisible();
+		await dialog.locator('form').evaluate((form: HTMLFormElement) => form.requestSubmit());
+		const pendingUrl = page.url();
+		page.once('dialog', (confirmation) => confirmation.dismiss());
+		await page.goBack({ timeout: 2_000 }).catch(() => undefined);
+		await expect(page).toHaveURL(pendingUrl);
+		expect(requests).toBe(1);
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+		).toBe(true);
+	} finally {
+		release();
+	}
+	await expect(dialog.getByRole('alert')).toContainText('분석 연결이 끊겨');
+	await expect(dialog.getByLabel('제목')).toHaveValue('선택한 제목');
+	await expect(dialog.getByLabel('PDF 파일')).toHaveValue(/sample.pdf$/);
+	await page.unroute('**/app/s/import');
+	await page.route('**/app/s/import', (route) => route.abort('failed'));
+	await dialog.getByRole('button', { name: '문장 암기장 만들기', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toContainText('분석 연결이 끊겨');
+	await page.unroute('**/app/s/import');
+	await page.route('**/app/s/import', (route) =>
+		route.fulfill({
+			contentType: 'application/json',
+			body: '\n\n' + JSON.stringify({ location: '/app/s' })
+		})
+	);
+	await dialog.getByRole('button', { name: '문장 암기장 만들기', exact: true }).click();
+	await expect(page).toHaveURL(/\/app\/s$/);
+	await expect(dialog).toBeHidden();
+});
+
+test('shows vocabulary action failures when creating from the sentence page', async ({ page }) => {
+	await page.goto('/login');
+	await page.getByLabel('아이디').fill('playwright');
+	await page.getByLabel('비밀번호').fill('playwright-password');
+	await page.getByRole('button', { name: '로그인' }).click();
+	await page.goto('/app/s?create=1&type=vocabulary');
+	const dialog = page.locator('dialog[aria-labelledby="study-create-title"]');
+	await dialog.getByLabel('단어장 이름').fill('   ');
+	await dialog.getByRole('button', { name: '단어장 만들기', exact: true }).click();
+	await expect(dialog.getByRole('alert')).toContainText('제목을 120자 이내로 입력해 주세요.');
+	await dialog.getByLabel('단어장 이름').fill('문장 페이지에서 추가');
+	await dialog.getByRole('button', { name: '단어장 만들기', exact: true }).click();
+	await expect(page).toHaveURL(/\/app\/v\/[0-9a-f-]{36}$/);
+});
