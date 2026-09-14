@@ -228,6 +228,7 @@ test('shows cross-page creation failures without losing the PDF or dialog', asyn
 	await page.getByLabel('아이디').fill('playwright');
 	await page.getByLabel('비밀번호').fill('playwright-password');
 	await page.getByRole('button', { name: '로그인' }).click();
+	await expect(page).toHaveURL(/\/app$/);
 	await page.goto('/app/s?create=1&type=sentence');
 	const dialog = page.locator('dialog[aria-labelledby="study-create-title"]');
 	await dialog.getByLabel('PDF 파일').setInputFiles({
@@ -249,6 +250,7 @@ test('keeps PDF analysis visible through navigation and reports broken connectio
 	await page.getByLabel('아이디').fill('playwright');
 	await page.getByLabel('비밀번호').fill('playwright-password');
 	await page.getByRole('button', { name: '로그인' }).click();
+	await expect(page).toHaveURL(/\/app$/);
 	await page.goto('/app/s?create=1&type=sentence');
 	const dialog = page.locator('dialog[aria-labelledby="study-create-title"]');
 	await dialog.getByLabel('제목').fill('선택한 제목');
@@ -318,6 +320,7 @@ test('shows vocabulary action failures when creating from the sentence page', as
 	await page.getByLabel('아이디').fill('playwright');
 	await page.getByLabel('비밀번호').fill('playwright-password');
 	await page.getByRole('button', { name: '로그인' }).click();
+	await expect(page).toHaveURL(/\/app$/);
 	await page.goto('/app/s?create=1&type=vocabulary');
 	const dialog = page.locator('dialog[aria-labelledby="study-create-title"]');
 	await dialog.getByLabel('단어장 이름').fill('   ');
