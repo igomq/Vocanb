@@ -1,7 +1,7 @@
 import { passagePlainText, type TranslationItem } from '$lib/sentence-domain';
 import { generatePassageTranslation } from '$lib/server/sentence-ai';
 import { getSentenceBook, updateSentenceBook } from '$lib/server/sentence-storage';
-import { json } from '@sveltejs/kit';
+import { error, json } from '@sveltejs/kit';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
@@ -36,7 +36,9 @@ export const POST = async ({ request, locals, params }) => {
 
 	await updateSentenceBook(locals.userId!, params.id, (current) => {
 		const target = current.passages.find((candidate) => candidate.id === passageId);
-		if (target) target.translation = translations;
+		if (!target || passagePlainText(target) !== passagePlainText(passage))
+			error(409, '본문이 수정되었습니다. 다시 요청해 주세요.');
+		target.translation = translations;
 		return current;
 	});
 	return json({ translations });

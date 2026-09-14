@@ -17,6 +17,79 @@ export const PassageParagraphSchema = z
 	.strict();
 export type PassageParagraph = z.infer<typeof PassageParagraphSchema>;
 
+const editableParagraphsSchema = z
+	.array(
+		PassageParagraphSchema.extend({
+			runs: z
+				.array(MemorizationRunSchema.extend({ text: z.string().min(1).max(100_000) }))
+				.min(1)
+				.max(2000)
+		}).refine((paragraph) => paragraph.runs.some((run) => run.text.trim()))
+	)
+	.min(1)
+	.max(200)
+	.refine(
+		(paragraphs) =>
+			paragraphs.reduce(
+				(total, paragraph) => total + paragraph.runs.reduce((sum, run) => sum + run.text.length, 0),
+				0
+			) <= 100_000
+	);
+
+export const SentencePassageEditSchema = z
+	.object({
+		passageId: z.string().uuid(),
+		expectedParagraphs: editableParagraphsSchema,
+		paragraphs: editableParagraphsSchema
+	})
+	.strict();
+
+/** Replaces an exact text range without moving punctuation or dropping whitespace. */
+export function spliceMemorizationRuns(
+	runs: MemorizationRun[],
+	start: number,
+	end: number,
+	replacement: MemorizationRun[]
+): MemorizationRun[] {
+	const slice = (from: number, to: number) => {
+		let offset = 0;
+		return runs.flatMap((run) => {
+			const text = run.text.slice(
+				Math.max(0, from - offset),
+				Math.max(0, Math.min(run.text.length, to - offset))
+			);
+			offset += run.text.length;
+			return text ? [{ text, memorize: run.memorize }] : [];
+		});
+	};
+	const result: MemorizationRun[] = [];
+	for (const run of [...slice(0, start), ...replacement, ...slice(end, Infinity)]) {
+		if (!run.text) continue;
+		const previous = result.at(-1);
+		if (previous?.memorize === run.memorize) previous.text += run.text;
+		else result.push({ ...run });
+	}
+	return result;
+}
+
+/** Keeps existing targets outside a text edit; new text starts unmarked. */
+export function editMemorizationText(runs: MemorizationRun[], text: string) {
+	const previous = runs.map((run) => run.text).join('');
+	if (previous === text) return runs;
+	let start = 0;
+	while (start < previous.length && start < text.length && previous[start] === text[start]) start++;
+	let suffix = 0;
+	while (
+		suffix < previous.length - start &&
+		suffix < text.length - start &&
+		previous[previous.length - 1 - suffix] === text[text.length - 1 - suffix]
+	)
+		suffix++;
+	return spliceMemorizationRuns(runs, start, previous.length - suffix, [
+		{ text: text.slice(start, text.length - suffix), memorize: false }
+	]);
+}
+
 export const PassageSummarySchema = z
 	.object({
 		topic: z.string().trim().min(1).max(1000),

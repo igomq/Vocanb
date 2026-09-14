@@ -2,7 +2,10 @@ import { defineConfig } from '@playwright/test';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-export const e2eDataDir = join(tmpdir(), `vocanb-e2e-${process.pid}-${Date.now()}`);
+export const e2eDataDir = (process.env.VOCANB_E2E_DATA_DIR ??= join(
+	tmpdir(),
+	`vocanb-e2e-${process.pid}-${Date.now()}`
+));
 
 export default defineConfig({
 	testDir: './tests/e2e',
