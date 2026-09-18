@@ -48,6 +48,45 @@ beforeEach(async () => {
 afterEach(async () => rm(directory, { recursive: true, force: true }));
 
 describe('learning storage', () => {
+	it('rejects stale evaluations and completion without changing a replacement session', async () => {
+		const vocabulary = await createVocabulary(userId, '탭 전환', '');
+		await addWord(vocabulary.id, 'apple', '사과');
+		const previous = await createLearningSession(userId, { mode: 'adaptive' });
+		const current = await createLearningSession(userId, { mode: 'cram' });
+		await expect(
+			evaluateLearningItem(userId, { sessionId: previous.id, index: 0, result: 'wrong' })
+		).rejects.toThrow();
+		await expect(completeLearningSession(userId, previous.id)).rejects.toThrow();
+		expect(await discardLearningSession(userId, previous.id)).toBe(false);
+		expect((await readAdaptiveDocument(userId)).sessions).toEqual([current]);
+		const saved = await evaluateLearningItem(userId, {
+			sessionId: current.id,
+			index: 0,
+			result: 'correct',
+			responseMs: 4_000_000
+		});
+		expect(saved.items[0].responseMs).toBe(3_600_000);
+	});
+
+	it('offers recommended learning when only sentence books exist', async () => {
+		await createSentenceBook(userId, {
+			title: '문장만',
+			sourceFileName: 'sample.pdf',
+			passages: [
+				{
+					label: 'Passage',
+					sourcePageStart: 1,
+					sourcePageEnd: 1,
+					paragraphs: [{ runs: [{ text: 'Remember this.', memorize: true }] }]
+				}
+			]
+		});
+		const snapshot = await getLearningSnapshot(userId);
+		const session = await createLearningSession(userId, { mode: 'adaptive' });
+		expect(snapshot.dashboard.recommended).toBe(1);
+		expect(session.items).toHaveLength(snapshot.dashboard.recommended);
+	});
+
 	it('hydrates from completed tests and ignores incomplete ones', async () => {
 		const vocabulary = await createVocabulary(userId, '기록', '');
 		const apple = await addWord(vocabulary.id, 'apple', '사과');
@@ -127,20 +166,25 @@ describe('learning storage', () => {
 		const again = await createLearningSession(userId, { mode: 'adaptive' });
 		expect(again.id).toBe(session.id);
 
-		await evaluateLearningItem(userId, { index: 0, result: 'correct', responseMs: 1200 });
-		await expect(completeLearningSession(userId)).rejects.toThrow('모든 항목');
+		await evaluateLearningItem(userId, {
+			sessionId: session.id,
+			index: 0,
+			result: 'correct',
+			responseMs: 1200
+		});
+		await expect(completeLearningSession(userId, session.id)).rejects.toThrow('모든 항목');
 
 		for (const [index] of session.items.entries()) {
-			await evaluateLearningItem(userId, { index, result: 'correct' });
+			await evaluateLearningItem(userId, { sessionId: session.id, index, result: 'correct' });
 		}
-		const completed = await completeLearningSession(userId, '2026-09-10T00:00:00.000Z');
+		const completed = await completeLearningSession(userId, session.id, '2026-09-10T00:00:00.000Z');
 		expect(completed.completedAt).toBe('2026-09-10T00:00:00.000Z');
 		const doc = await readAdaptiveDocument(userId);
 		expect(doc.days[0]?.reviewed).toBe(new Set(session.items.map((item) => item.key)).size);
 
 		const cram = await createLearningSession(userId, { mode: 'cram', itemCount: 2 });
 		expect(cram.mode).toBe('cram');
-		await discardLearningSession(userId);
+		await discardLearningSession(userId, cram.id);
 		expect((await readAdaptiveDocument(userId)).sessions.some((item) => !item.completedAt)).toBe(
 			false
 		);
@@ -180,11 +224,16 @@ describe('learning storage', () => {
 		expect(session.items[index].promptKind).toBe('recall');
 		expect(session.items[index].answer).toBe('the idea');
 		const correct = await evaluateLearningItem(userId, {
+			sessionId: session.id,
 			index,
 			typedAnswer: 'the idea'
 		});
 		expect(correct.items[index].result).toBe('correct');
-		const wrong = await evaluateLearningItem(userId, { index, typedAnswer: 'nope' });
+		const wrong = await evaluateLearningItem(userId, {
+			sessionId: session.id,
+			index,
+			typedAnswer: 'nope'
+		});
 		expect(wrong.items[index].result).toBe('wrong');
 	});
 

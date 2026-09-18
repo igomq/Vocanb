@@ -133,6 +133,7 @@
 
 				{#if current.choices?.length}
 					<form class="evaluation-form" method="post" action="?/evaluate" use:enhance={enhanceEval}>
+						<input type="hidden" name="sessionId" value={session.id} />
 						<input type="hidden" name="index" value={index} />
 						<input type="hidden" name="responseMs" value={Math.max(0, Date.now() - shownAt)} />
 						{#each current.choices as choice (choice)}
@@ -162,6 +163,7 @@
 					</form>
 				{:else if current.promptKind === 'ko-to-en' || current.promptKind === 'cloze' || current.promptKind === 'form'}
 					<form class="form-stack" method="post" action="?/evaluate" use:enhance={enhanceEval}>
+						<input type="hidden" name="sessionId" value={session.id} />
 						<input type="hidden" name="index" value={index} />
 						<input type="hidden" name="responseMs" value={Math.max(0, Date.now() - shownAt)} />
 						<label class="field" for="learn-typed">답</label>
@@ -181,6 +183,7 @@
 					</form>
 				{:else}
 					<form class="form-stack" method="post" action="?/evaluate" use:enhance={enhanceEval}>
+						<input type="hidden" name="sessionId" value={session.id} />
 						<input type="hidden" name="index" value={index} />
 						<input type="hidden" name="responseMs" value={Math.max(0, Date.now() - shownAt)} />
 						<label class="field" for="learn-typed"
@@ -224,6 +227,7 @@
 		<footer class="test-footer">
 			<a class="button button-quiet" href={resolve('/app')}>나가기</a>
 			<form method="post" action="?/complete" use:enhance={enhanceComplete}>
+				<input type="hidden" name="sessionId" value={session.id} />
 				<button
 					class="button button-primary"
 					type="submit"

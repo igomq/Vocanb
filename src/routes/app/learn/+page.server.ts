@@ -84,6 +84,7 @@ export const actions: Actions = {
 			return fail(400, { message: '평가를 선택해 주세요.' });
 		try {
 			await evaluateLearningItem(locals.userId!, {
+				sessionId: String(data.get('sessionId') || ''),
 				index,
 				result: result.success ? result.data : undefined,
 				responseMs: Number.isFinite(responseMs) && responseMs >= 0 ? responseMs : undefined,
@@ -96,9 +97,12 @@ export const actions: Actions = {
 			});
 		}
 	},
-	complete: async ({ locals }) => {
+	complete: async ({ request, locals }) => {
 		try {
-			await completeLearningSession(locals.userId!);
+			await completeLearningSession(
+				locals.userId!,
+				String((await request.formData()).get('sessionId') || '')
+			);
 		} catch (error) {
 			return fail(400, {
 				message: error instanceof Error ? error.message : '학습을 완료하지 못했습니다.'
@@ -106,8 +110,11 @@ export const actions: Actions = {
 		}
 		redirect(303, '/app?learned=1');
 	},
-	discard: async ({ locals }) => {
-		await discardLearningSession(locals.userId!);
+	discard: async ({ request, locals }) => {
+		await discardLearningSession(
+			locals.userId!,
+			String((await request.formData()).get('sessionId') || '')
+		);
 		redirect(303, '/app');
 	}
 };

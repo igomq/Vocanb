@@ -935,6 +935,7 @@ export function sameCanonical(value: string, expected: string) {
 }
 
 export function applyAiPrompt(item: QueueItem, draft: unknown): QueueItem | null {
+	if (item.kind !== 'word') return null;
 	if (!draft || typeof draft !== 'object') return null;
 	const data = draft as Record<string, unknown>;
 	if (data.itemId != null && data.itemId !== item.itemId) return null;
@@ -968,7 +969,7 @@ export function applyAiPrompt(item: QueueItem, draft: unknown): QueueItem | null
 		promptKind: type.data,
 		prompt,
 		answer: type.data === 'recall' ? item.meaning : item.english,
-		...(choices ? { choices } : {})
+		choices
 	};
 }
 

@@ -75,6 +75,7 @@ describe('adaptive learn route', () => {
 
 		for (const [index] of page.session!.items.entries()) {
 			const form = new FormData();
+			form.set('sessionId', page.session!.id);
 			form.set('index', String(index));
 			form.set('result', 'correct');
 			expect(
@@ -85,7 +86,15 @@ describe('adaptive learn route', () => {
 			).toMatchObject({ success: true });
 		}
 
-		await expect(actions.complete!({ locals: { userId } } as never)).rejects.toMatchObject({
+		await expect(
+			actions.complete!({
+				request: new Request('http://localhost', {
+					method: 'POST',
+					body: new URLSearchParams({ sessionId: page.session!.id })
+				}),
+				locals: { userId }
+			} as never)
+		).rejects.toMatchObject({
 			status: 303,
 			location: '/app?learned=1'
 		});
@@ -106,7 +115,17 @@ describe('adaptive learn route', () => {
 				locals: { userId }
 			} as never)
 		).rejects.toMatchObject({ status: 303 });
-		await expect(actions.discard!({ locals: { userId } } as never)).rejects.toMatchObject({
+		await expect(
+			actions.discard!({
+				request: new Request('http://localhost', {
+					method: 'POST',
+					body: new URLSearchParams({
+						sessionId: (await readAdaptiveDocument(userId)).sessions.at(-1)!.id
+					})
+				}),
+				locals: { userId }
+			} as never)
+		).rejects.toMatchObject({
 			status: 303,
 			location: '/app'
 		});
@@ -142,6 +161,7 @@ describe('adaptive learn route', () => {
 			} as never)
 		).rejects.toMatchObject({ status: 303 });
 		const form = new FormData();
+		form.set('sessionId', (await readAdaptiveDocument(userId)).sessions.at(-1)!.id);
 		form.set('index', '0');
 		form.set('result', 'correct');
 		form.set('typedAnswer', 'appel');

@@ -232,12 +232,6 @@ export async function syncLearning(userId: string, now = new Date().toISOString(
 	});
 }
 
-export function wordCandidates(candidates: LearningCandidate[], sourceId?: string | null) {
-	return candidates.filter(
-		(item) => item.kind === 'word' && (!sourceId || item.sourceId === sourceId)
-	);
-}
-
 export type LearningSnapshot = {
 	dashboard: DashboardData;
 	sentenceDue: {
@@ -255,8 +249,8 @@ export async function getLearningSnapshot(
 ): Promise<LearningSnapshot> {
 	const { document, vocabularies, books, now } = await syncLearning(userId);
 	const all = candidatesFor(document, vocabularies, books, now);
-	const words = wordCandidates(all, sourceId);
-	const queue = buildQueue(words, now, { pairs: document.confusion });
+	const selected = all.filter((item) => !sourceId || item.sourceId === sourceId);
+	const queue = buildQueue(selected, now, { pairs: document.confusion });
 	const sentences = all.filter((item) => item.kind === 'sentence');
 	const sentenceQueue = buildQueue(sentences, now, { pairs: [], limit: 3, pool: sentences });
 	return {
@@ -363,6 +357,7 @@ export async function createLearningSession(
 export async function evaluateLearningItem(
 	userId: string,
 	input: {
+		sessionId: string;
 		index: number;
 		result?: ReviewGrade;
 		responseMs?: number;
@@ -371,7 +366,9 @@ export async function evaluateLearningItem(
 ) {
 	return withLock(adaptivePath(userId), async () => {
 		const document = await readAdaptiveDocument(userId);
-		const session = document.sessions.find((item) => !item.completedAt);
+		const session = document.sessions.find(
+			(item) => item.id === input.sessionId && !item.completedAt
+		);
 		const item = session?.items[input.index];
 		if (!session || !item) throw new Error('학습 항목을 찾을 수 없습니다.');
 		if (input.result === 'unknown' || input.result === 'ambiguous') {
@@ -381,7 +378,7 @@ export async function evaluateLearningItem(
 		} else if (input.typedAnswer) {
 			item.result = sameCanonical(input.typedAnswer, item.answer) ? 'correct' : 'wrong';
 		} else throw new Error('평가를 선택해 주세요.');
-		if (input.responseMs != null) item.responseMs = input.responseMs;
+		if (input.responseMs != null) item.responseMs = Math.min(3_600_000, input.responseMs);
 		if (input.typedAnswer) item.typedAnswer = input.typedAnswer.slice(0, 300);
 		else delete item.typedAnswer;
 		await writeAdaptiveDocument(userId, document);
@@ -389,10 +386,14 @@ export async function evaluateLearningItem(
 	});
 }
 
-export async function completeLearningSession(userId: string, now = new Date().toISOString()) {
+export async function completeLearningSession(
+	userId: string,
+	sessionId: string,
+	now = new Date().toISOString()
+) {
 	return withLock(adaptivePath(userId), async () => {
 		const document = await readAdaptiveDocument(userId);
-		const session = document.sessions.find((item) => !item.completedAt);
+		const session = document.sessions.find((item) => item.id === sessionId && !item.completedAt);
 		if (!session) throw new Error('진행 중인 학습이 없습니다.');
 		const lastByKey = new Map<string, (typeof session.items)[number]>();
 		for (const item of session.items) {
@@ -439,10 +440,12 @@ export async function completeLearningSession(userId: string, now = new Date().t
 	});
 }
 
-export async function discardLearningSession(userId: string) {
+export async function discardLearningSession(userId: string, sessionId: string) {
 	return withLock(adaptivePath(userId), async () => {
 		const document = await readAdaptiveDocument(userId);
-		const next = document.sessions.filter((session) => session.completedAt);
+		const next = document.sessions.filter(
+			(session) => session.id !== sessionId || session.completedAt
+		);
 		if (next.length === document.sessions.length) return false;
 		document.sessions = next;
 		await writeAdaptiveDocument(userId, document);

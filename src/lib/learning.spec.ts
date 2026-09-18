@@ -352,14 +352,28 @@ describe('AI prompt validation', () => {
 	});
 
 	it('accepts a cloze whose canonical answer matches the word', () => {
-		const next = applyAiPrompt(base, {
-			itemId: base.itemId,
-			type: 'cloze',
-			prompt: 'They will ___ a new policy.',
-			answer: 'adopt'
-		});
+		const next = applyAiPrompt(
+			{ ...base, choices: ['adopt', 'adapt'] },
+			{
+				itemId: base.itemId,
+				type: 'cloze',
+				prompt: 'They will ___ a new policy.',
+				answer: 'adopt'
+			}
+		);
 		expect(next?.promptKind).toBe('cloze');
 		expect(next?.answer).toBe('adopt');
+		expect(next?.choices).toBeUndefined();
+		expect(
+			applyAiPrompt(
+				{ ...base, kind: 'sentence' },
+				{
+					type: 'cloze',
+					prompt: 'They ___ it.',
+					answer: 'adopt'
+				}
+			)
+		).toBeNull();
 	});
 });
 
