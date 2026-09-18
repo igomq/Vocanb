@@ -4,10 +4,24 @@
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { page } from '$app/state';
 	import type { FolderKind } from '$lib/folders';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { MediaQuery, SvelteSet } from 'svelte/reactivity';
+	import { onMount, tick } from 'svelte';
 
 	let { data, children } = $props();
 	let mobileOpen = $state(false);
+	let ready = $state(false);
+	onMount(() => {
+		ready = true;
+	});
+	let sidebarCollapsed = $state(false);
+	const mobile = new MediaQuery('(max-width: 820px)');
+	const sidebarOpen = $derived(mobile.current ? mobileOpen : !sidebarCollapsed);
+	let sidebarCloseButton: HTMLButtonElement | undefined = $state();
+	let sidebarOpenButton: HTMLButtonElement | undefined = $state();
+	let mobileMenuButton: HTMLButtonElement | undefined = $state();
+	$effect(() => {
+		if (!mobile.current) mobileOpen = false;
+	});
 	let logoutPending = $state(false);
 	let openFolders = $state<Record<string, boolean>>({});
 	let folderDraft = $state<FolderKind | null>(null);
@@ -76,6 +90,16 @@
 		mobileOpen = false;
 	}
 
+	async function setSidebarOpen(open: boolean) {
+		if (mobile.current) mobileOpen = open;
+		else sidebarCollapsed = !open;
+		await tick();
+		if (sidebarOpen !== open) return;
+		(open ? sidebarCloseButton : mobile.current ? mobileMenuButton : sidebarOpenButton)?.focus({
+			preventScroll: true
+		});
+	}
+
 	function confirmDeleteVocabulary(event: SubmitEvent, title: string) {
 		if (!window.confirm(`‘${title}’ 단어장과 모든 단어를 삭제할까요?`)) event.preventDefault();
 	}
@@ -92,7 +116,7 @@
 
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key !== 'Escape') return;
-		closeDrawer();
+		if (mobile.current && mobileOpen) void setSidebarOpen(false);
 		moving = null;
 	}
 
@@ -205,18 +229,52 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="app-shell">
-	{#if mobileOpen}
-		<button class="drawer-scrim" type="button" aria-label="메뉴 닫기" onclick={closeDrawer}
-		></button>
-	{/if}
+{#snippet sidebarIcon(expanded: boolean)}
+	<svg viewBox="0 0 24 24" aria-hidden="true">
+		<rect x="3" y="4" width="18" height="16" rx="2" />
+		<path d="M9 4v16" />
+		<path d={expanded ? 'm16 9-3 3 3 3' : 'm14 9 3 3-3 3'} />
+	</svg>
+{/snippet}
 
-	<aside class:is-open={mobileOpen} class="app-sidebar" aria-label="학습 탐색">
+<div class:sidebar-collapsed={sidebarCollapsed} class="app-shell">
+	<button
+		class:is-open={mobileOpen}
+		class="drawer-scrim"
+		type="button"
+		aria-label="메뉴 닫기"
+		tabindex="-1"
+		aria-hidden="true"
+		onclick={() => setSidebarOpen(false)}
+	></button>
+
+	<aside
+		id="app-sidebar"
+		class:is-open={mobileOpen}
+		class="app-sidebar"
+		aria-label="학습 탐색"
+		inert={!sidebarOpen}
+	>
 		<div class="sidebar-inner">
-			<a class="brand" href={resolve('/app')} onclick={closeDrawer} aria-label="Vocanb 홈">
-				<span>Vocanb</span>
-				<small>학습</small>
-			</a>
+			<div class="sidebar-brand-row">
+				<a class="brand" href={resolve('/app')} onclick={closeDrawer} aria-label="Vocanb 홈">
+					<span>Vocanb</span>
+					<small>학습</small>
+				</a>
+				<button
+					bind:this={sidebarCloseButton}
+					disabled={!ready}
+					class="icon-button sidebar-toggle"
+					type="button"
+					aria-label="사이드바 닫기"
+					title="사이드바 닫기"
+					aria-controls="app-sidebar"
+					aria-expanded={sidebarOpen}
+					onclick={() => setSidebarOpen(false)}
+				>
+					{@render sidebarIcon(true)}
+				</button>
+			</div>
 
 			<div class="sidebar-heading">
 				<span>내 학습장</span>
@@ -680,14 +738,31 @@
 		</div>
 	</aside>
 
-	<main class="app-main">
+	<main class="app-main" inert={mobile.current && mobileOpen}>
+		<button
+			bind:this={sidebarOpenButton}
+			disabled={!ready}
+			class="icon-button sidebar-toggle sidebar-reopen"
+			type="button"
+			aria-label="사이드바 열기"
+			title="사이드바 열기"
+			aria-controls="app-sidebar"
+			aria-expanded={sidebarOpen}
+			onclick={() => setSidebarOpen(true)}
+		>
+			{@render sidebarIcon(false)}
+		</button>
 		<header class="mobile-topbar">
 			<button
-				class="icon-button"
+				bind:this={mobileMenuButton}
+				disabled={!ready}
+				class="icon-button sidebar-toggle"
 				type="button"
 				aria-label="메뉴 열기"
 				title="메뉴 열기"
-				onclick={() => (mobileOpen = true)}>☰</button
+				aria-controls="app-sidebar"
+				aria-expanded={sidebarOpen}
+				onclick={() => setSidebarOpen(true)}>{@render sidebarIcon(false)}</button
 			>
 			<span class="mobile-topbar-title">학습</span>
 			<span class="mobile-topbar-spacer" aria-hidden="true"></span>

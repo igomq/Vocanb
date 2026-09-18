@@ -10,7 +10,8 @@
 	import SentenceTest from '$lib/components/SentenceTest.svelte';
 	import SentenceChat from '$lib/components/SentenceChat.svelte';
 	import PassageEditor from '$lib/components/PassageEditor.svelte';
-	import { SvelteMap } from 'svelte/reactivity';
+	import { MediaQuery, SvelteMap } from 'svelte/reactivity';
+	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { page } from '$app/state';
@@ -18,6 +19,9 @@
 	let { data } = $props();
 
 	type Tab = 'summary' | 'passage' | 'test' | 'translation';
+	const tabs: Tab[] = ['summary', 'passage', 'test', 'translation'];
+	const reducedMotion = new MediaQuery('(prefers-reduced-motion: reduce)');
+	let panel: HTMLDivElement | undefined = $state();
 	let activeIndex = $state(0);
 	let tab = $state<Tab>('passage');
 	let testResults = $state<Record<string, Record<string, SentenceTestResult>>>({});
@@ -87,10 +91,12 @@
 	};
 
 	function goTo(index: number) {
-		if (index < 0 || index >= passages.length) return;
+		if (editing || index === activeIndex || index < 0 || index >= passages.length) return;
+		const direction = index > activeIndex ? 1 : -1;
 		activeIndex = index;
 		editNotice = '';
 		tab = 'passage';
+		void animatePanel(direction);
 	}
 
 	function applyPassage(passage: SentencePassage) {
@@ -111,7 +117,23 @@
 	}
 
 	function switchTab(next: Tab) {
+		if (editing || next === tab) return;
+		const direction = tabs.indexOf(next) > tabs.indexOf(tab) ? 1 : -1;
 		tab = next;
+		void animatePanel(direction);
+	}
+
+	async function animatePanel(direction: number) {
+		await tick();
+		panel?.getAnimations().forEach((animation) => animation.cancel());
+		if (reducedMotion.current) return;
+		panel?.animate(
+			[
+				{ opacity: 0.35, transform: `translateX(${direction * 18}px)` },
+				{ opacity: 1, transform: 'translateX(0)' }
+			],
+			{ duration: 220, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' }
+		);
 	}
 
 	function recordResult(key: string, result: SentenceTestResult | null) {
@@ -206,109 +228,116 @@
 		</div>
 	{/if}
 
-	{#key activePassage.id}
-		<section class="sentence-stage" aria-label="지문 학습">
-			<div class="sentence-stage-header">
-				<h2 class="sentence-passage-label">{activePassage.label}</h2>
-				{#if !editing}
-					<button
-						class="button button-secondary"
-						type="button"
-						disabled={syncedBookId !== data.book.id || savingResults || pendingResultSaves.size > 0}
-						onclick={() => {
-							editing = true;
-							tab = 'passage';
-							editNotice = '';
-						}}>본문·암기 범위 수정</button
-					>
-				{/if}
-				<span class="sentence-passage-position">
-					{activeIndex + 1} / {passages.length}
-				</span>
-			</div>
-
-			<nav class="sentence-nav" aria-label="지문 이동과 보기 선택">
+	<section class="sentence-stage" aria-label="지문 학습">
+		<div class="sentence-stage-header">
+			<h2 class="sentence-passage-label">{activePassage.label}</h2>
+			{#if !editing}
 				<button
-					class="button button-secondary sentence-nav-arrow"
+					class="button button-secondary"
 					type="button"
-					onclick={() => goTo(activeIndex - 1)}
-					disabled={editing || !nav.canPrevious}>‹ 이전</button
+					disabled={syncedBookId !== data.book.id || savingResults || pendingResultSaves.size > 0}
+					onclick={() => {
+						editing = true;
+						tab = 'passage';
+						editNotice = '';
+					}}>본문·암기 범위 수정</button
 				>
-				<div class="sentence-tabs" role="tablist" aria-label="보기 모드">
-					<button
-						class="sentence-tab"
-						class:is-active={tab === 'summary'}
-						type="button"
-						role="tab"
-						aria-selected={tab === 'summary'}
-						disabled={editing}
-						onclick={() => switchTab('summary')}>정리</button
-					>
-					<button
-						class="sentence-tab"
-						class:is-active={tab === 'passage'}
-						type="button"
-						role="tab"
-						aria-selected={tab === 'passage'}
-						disabled={editing}
-						onclick={() => switchTab('passage')}>본문</button
-					>
-					<button
-						class="sentence-tab"
-						class:is-active={tab === 'test'}
-						type="button"
-						role="tab"
-						aria-selected={tab === 'test'}
-						disabled={editing}
-						onclick={() => switchTab('test')}>테스트</button
-					>
-					<button
-						class="sentence-tab"
-						class:is-active={tab === 'translation'}
-						type="button"
-						role="tab"
-						aria-selected={tab === 'translation'}
-						disabled={editing}
-						onclick={() => switchTab('translation')}>번역</button
-					>
+			{/if}
+			<span class="sentence-passage-position">
+				{activeIndex + 1} / {passages.length}
+			</span>
+		</div>
+
+		<nav class="sentence-nav" aria-label="지문 이동과 보기 선택">
+			<button
+				class="button button-secondary sentence-nav-arrow"
+				type="button"
+				onclick={() => goTo(activeIndex - 1)}
+				disabled={editing || !nav.canPrevious}>‹ 이전</button
+			>
+			<div
+				class="sentence-tabs"
+				role="tablist"
+				aria-label="보기 모드"
+				style={`--active-tab: ${tabs.indexOf(tab)}`}
+			>
+				<button
+					class="sentence-tab"
+					class:is-active={tab === 'summary'}
+					type="button"
+					role="tab"
+					aria-selected={tab === 'summary'}
+					disabled={editing}
+					onclick={() => switchTab('summary')}>정리</button
+				>
+				<button
+					class="sentence-tab"
+					class:is-active={tab === 'passage'}
+					type="button"
+					role="tab"
+					aria-selected={tab === 'passage'}
+					disabled={editing}
+					onclick={() => switchTab('passage')}>본문</button
+				>
+				<button
+					class="sentence-tab"
+					class:is-active={tab === 'test'}
+					type="button"
+					role="tab"
+					aria-selected={tab === 'test'}
+					disabled={editing}
+					onclick={() => switchTab('test')}>테스트</button
+				>
+				<button
+					class="sentence-tab"
+					class:is-active={tab === 'translation'}
+					type="button"
+					role="tab"
+					aria-selected={tab === 'translation'}
+					disabled={editing}
+					onclick={() => switchTab('translation')}>번역</button
+				>
+			</div>
+			<button
+				class="button button-secondary sentence-nav-arrow"
+				type="button"
+				onclick={() => goTo(activeIndex + 1)}
+				disabled={editing || !nav.canNext}>다음 ›</button
+			>
+		</nav>
+
+		<div class="sentence-panel">
+			{#key activePassage.id}
+				<div class="sentence-panel-content" bind:this={panel}>
+					{#if editNotice}<p role="status">{editNotice}</p>{/if}
+					{#if editing}
+						<PassageEditor
+							bookId={data.book.id}
+							passage={activePassage}
+							onsave={applyPassage}
+							oncancel={() => (editing = false)}
+						/>
+					{:else if tab === 'summary'}
+						<PassageSummaryView bookId={data.book.id} passage={activePassage} />
+					{:else if tab === 'passage'}
+						<MemorizationPassage
+							passage={activePassage}
+							results={testResults[activePassage.id] ?? {}}
+						/>
+					{:else if tab === 'test'}
+						<SentenceTest
+							passage={activePassage}
+							results={testResults[activePassage.id] ?? {}}
+							onresult={recordResult}
+							onreset={resetResults}
+						/>
+					{:else}
+						<PassageTranslationView bookId={data.book.id} passage={activePassage} />
+					{/if}
 				</div>
-				<button
-					class="button button-secondary sentence-nav-arrow"
-					type="button"
-					onclick={() => goTo(activeIndex + 1)}
-					disabled={editing || !nav.canNext}>다음 ›</button
-				>
-			</nav>
-
-			<div class="sentence-panel">
-				{#if editNotice}<p role="status">{editNotice}</p>{/if}
-				{#if editing}
-					<PassageEditor
-						bookId={data.book.id}
-						passage={activePassage}
-						onsave={applyPassage}
-						oncancel={() => (editing = false)}
-					/>
-				{:else if tab === 'summary'}
-					<PassageSummaryView bookId={data.book.id} passage={activePassage} />
-				{:else if tab === 'passage'}
-					<MemorizationPassage
-						passage={activePassage}
-						results={testResults[activePassage.id] ?? {}}
-					/>
-				{:else if tab === 'test'}
-					<SentenceTest
-						passage={activePassage}
-						results={testResults[activePassage.id] ?? {}}
-						onresult={recordResult}
-						onreset={resetResults}
-					/>
-				{:else}
-					<PassageTranslationView bookId={data.book.id} passage={activePassage} />
-				{/if}
-			</div>
-		</section>
-	{/key}
+			{/key}
+		</div>
+	</section>
 
 	<dialog bind:this={renameDialog} class="modal" aria-labelledby="rename-sentence-title">
 		<div class="modal-body">

@@ -35,13 +35,18 @@ test('corrects sentence text and memorization ranges on desktop and mobile', asy
 						]
 					}
 				],
-				summary: null,
-				translation: null,
+				summary: {
+					topic: '저장된 지문 정리',
+					flow: ['첫째', '둘째', '셋째'],
+					takeaway: '핵심 내용'
+				},
+				translation: [{ english: 'Before. Original target.', korean: '저장된 지문 번역' }],
 				testResults: { '0:1': { status: 'correct' } },
 				testResultsRevision: 0
 			}
 		]
 	};
+	book.passages.push({ ...book.passages[0], id: randomUUID(), order: 1, label: '두 번째 지문' });
 	await mkdir(directory, { recursive: true });
 	await writeFile(file, JSON.stringify(book));
 	await page.goto('/login');
@@ -50,6 +55,56 @@ test('corrects sentence text and memorization ranges on desktop and mobile', asy
 	await page.getByRole('button', { name: '로그인' }).click();
 	await expect(page).toHaveURL(/\/app$/);
 	await page.goto(`/app/s/${bookId}`);
+	await expect(
+		page.getByRole('button', { name: '본문·암기 범위 수정', exact: true })
+	).toBeEnabled();
+	await page.evaluate(() => {
+		const animate = Element.prototype.animate;
+		Element.prototype.animate = function (frames, options) {
+			if (this.classList.contains('sentence-panel-content')) {
+				document.documentElement.dataset.panelMotion = JSON.stringify(frames);
+				document.documentElement.dataset.panelMotionCount = String(
+					Number(document.documentElement.dataset.panelMotionCount || 0) + 1
+				);
+			}
+			return animate.call(this, frames, options);
+		};
+	});
+	const tab = (name: string) => page.getByRole('tab', { name, exact: true });
+	await tab('정리').click();
+	await expect(page.locator('.passage-summary-topic')).toHaveText('저장된 지문 정리');
+	await expect(page.locator('html')).toHaveAttribute('data-panel-motion', /translateX\(-18px\)/);
+	await tab('번역').click();
+	await expect(page.locator('.translation-korean')).toHaveText('저장된 지문 번역');
+	await expect(page.locator('html')).toHaveAttribute('data-panel-motion', /translateX\(18px\)/);
+	await page.screenshot({
+		path: testInfo.outputPath('sentence-tabs-desktop.png'),
+		fullPage: true,
+		animations: 'disabled'
+	});
+	await page.evaluate(() => {
+		(document.querySelectorAll('.sentence-tab')[2] as HTMLButtonElement).click();
+		(document.querySelectorAll('.sentence-tab')[1] as HTMLButtonElement).click();
+	});
+	await expect(tab('본문')).toHaveAttribute('aria-selected', 'true');
+	await expect(page.locator('.sentence-panel-content')).toHaveCount(1);
+	await expect(page.locator('.memorization-paragraph')).toHaveText('Before. Original target.');
+	await page.getByRole('button', { name: '다음 ›', exact: true }).click();
+	await expect(page.locator('.sentence-passage-position')).toHaveText('2 / 2');
+	await expect(page.locator('html')).toHaveAttribute('data-panel-motion', /translateX\(18px\)/);
+	await page.getByRole('button', { name: '‹ 이전', exact: true }).click();
+	await expect(page.locator('.sentence-passage-position')).toHaveText('1 / 2');
+	await expect(page.locator('html')).toHaveAttribute('data-panel-motion', /translateX\(-18px\)/);
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	const motionCount = await page.locator('html').getAttribute('data-panel-motion-count');
+	await tab('테스트').click();
+	await expect(page.locator('.sentence-test-progress')).toBeVisible();
+	await expect(page.locator('html')).toHaveAttribute('data-panel-motion-count', motionCount!);
+	await page.getByRole('button', { name: '다음 ›', exact: true }).click();
+	await expect(page.locator('.sentence-passage-position')).toHaveText('2 / 2');
+	await expect(page.locator('html')).toHaveAttribute('data-panel-motion-count', motionCount!);
+	await page.getByRole('button', { name: '‹ 이전', exact: true }).click();
+	await page.emulateMedia({ reducedMotion: 'no-preference' });
 	await page.getByRole('button', { name: '본문·암기 범위 수정', exact: true }).click();
 	const field = page.getByLabel('문단 1', { exact: true });
 	const restored = 'Before. Missing sentence. Original target.';

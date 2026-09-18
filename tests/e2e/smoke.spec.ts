@@ -190,11 +190,44 @@ test('covers the core vocabulary flow without Vertex', async ({ page }) => {
 	await expect(page).toHaveURL(/\/app$/);
 });
 
-test('keeps direct navigation contained and the mobile drawer out of focus', async ({ page }) => {
+test('keeps desktop and mobile sidebars collapsible, animated, and out of focus when closed', async ({
+	page
+}, testInfo) => {
 	await page.goto('/login');
 	await page.getByLabel('아이디').fill('playwright');
 	await page.getByLabel('비밀번호').fill('playwright-password');
 	await page.getByRole('button', { name: '로그인' }).click();
+	await expect(page).toHaveURL(/\/app$/);
+	const sidebar = page.locator('.app-sidebar');
+	const desktopOpen = page.getByRole('button', { name: '사이드바 열기', exact: true });
+	const close = page.getByRole('button', { name: '사이드바 닫기', exact: true });
+	await expect(sidebar).toBeVisible();
+	await close.click();
+	await expect(sidebar).toBeHidden();
+	await expect(desktopOpen).toBeFocused();
+	expect(await sidebar.evaluate((element) => element.hasAttribute('inert'))).toBe(true);
+	await expect
+		.poll(() => page.locator('.app-main').evaluate((element) => element.getBoundingClientRect().x))
+		.toBe(0);
+	await page.getByRole('button', { name: '+ 학습장 추가', exact: true }).click();
+	await expect(page).toHaveURL(/create=1/);
+	await page.getByRole('button', { name: '닫기', exact: true }).click();
+	await expect(sidebar).toBeHidden();
+	await page.screenshot({
+		path: testInfo.outputPath('sidebar-desktop-closed.png'),
+		fullPage: true
+	});
+	await desktopOpen.click();
+	await expect(close).toBeFocused();
+	await expect
+		.poll(() => page.locator('.app-main').evaluate((element) => element.getBoundingClientRect().x))
+		.toBe(260);
+	await page.screenshot({ path: testInfo.outputPath('sidebar-desktop-open.png'), fullPage: true });
+	// Interrupt an in-flight transition; the final state must still be usable.
+	await close.click();
+	await desktopOpen.click();
+	await expect(sidebar).toBeVisible();
+	expect(await sidebar.evaluate((element) => element.hasAttribute('inert'))).toBe(false);
 
 	for (const viewport of [
 		{ width: 320, height: 568 },
@@ -212,15 +245,42 @@ test('keeps direct navigation contained and the mobile drawer out of focus', asy
 		await page.getByRole('button', { name: '닫기' }).click();
 		await expect(page).toHaveURL(/\/app$/);
 
-		const sidebar = page.locator('.app-sidebar');
 		expect(await sidebar.evaluate((element) => getComputedStyle(element).visibility)).toBe(
 			'hidden'
 		);
 		await page.getByRole('button', { name: '메뉴 열기' }).click();
 		await expect(sidebar).toBeVisible();
+		await expect(close).toBeFocused();
+		expect(
+			await page.locator('.app-main').evaluate((element) => element.hasAttribute('inert'))
+		).toBe(true);
+		if (viewport.width === 390) {
+			await page.screenshot({
+				path: testInfo.outputPath('sidebar-mobile.png'),
+				fullPage: true,
+				animations: 'disabled'
+			});
+			await close.click();
+			await expect(page.getByRole('button', { name: '메뉴 열기' })).toBeFocused();
+			await page.getByRole('button', { name: '메뉴 열기' }).click();
+			await page.locator('.drawer-scrim').click({ position: { x: 380, y: 200 } });
+			await expect(sidebar).toBeHidden();
+			await page.getByRole('button', { name: '메뉴 열기' }).click();
+		}
 		await page.keyboard.press('Escape');
 		await expect(sidebar).toBeHidden();
+		await expect(page.getByRole('button', { name: '메뉴 열기' })).toBeFocused();
 	}
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await close.click();
+	await expect(sidebar).toBeHidden();
+	expect(await sidebar.evaluate((element) => getComputedStyle(element).transitionDelay)).toBe('0s');
+	expect(
+		await sidebar.evaluate((element) => parseFloat(getComputedStyle(element).transitionDuration))
+	).toBeLessThan(0.001);
+	await desktopOpen.click();
+	await expect(close).toBeFocused();
 });
 
 test('shows cross-page creation failures without losing the PDF or dialog', async ({ page }) => {
