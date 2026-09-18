@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { SENTENCE_PDF_MAX_BYTES } from '$lib/sentence-domain';
 import { listSentenceBooks } from '$lib/server/sentence-storage';
 import { actions } from './+page.server';
+import { POST } from './s/import/+server';
 
 vi.mock('$lib/server/sentence-ai', () => ({
 	sentenceImportProvider: { extract: vi.fn() }
@@ -152,6 +153,85 @@ describe('sentence book delete action', () => {
 				locals: { userId }
 			} as never)
 		).rejects.toMatchObject({ status: 303 });
+		expect(await listSentenceBooks(userId)).toEqual([]);
+	});
+});
+
+describe('streamed sentence import', () => {
+	it('keeps a slow analysis alive and returns the saved book after 300 seconds', async () => {
+		vi.useFakeTimers();
+		let finish!: (value: ReturnType<typeof providerResponse>) => void;
+		vi.mocked(sentenceImportProvider.extract).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		const form = new FormData();
+		form.append('pdf', pdfFile());
+		const request = new Request('http://localhost/app/s/import', { method: 'POST', body: form });
+		const response = await POST({ request, locals: { userId } } as never);
+		const reader = response.body!.getReader();
+		try {
+			expect(response.headers.get('X-Accel-Buffering')).toBe('no');
+			expect(response.headers.get('Cache-Control')).toContain('no-store');
+			const decoder = new TextDecoder();
+			expect(decoder.decode((await reader.read()).value)).toBe('\n');
+			await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+			for (let seconds = 0; seconds < 315; seconds += 15) {
+				await vi.advanceTimersByTimeAsync(15_000);
+				expect(decoder.decode((await reader.read()).value)).toBe('\n');
+			}
+			finish(providerResponse());
+			const result = JSON.parse(decoder.decode((await reader.read()).value));
+			expect((await reader.read()).done).toBe(true);
+			const [book] = await listSentenceBooks(userId);
+			expect(result.location).toBe(`/app/s/${book.id}`);
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			await reader.cancel();
+			vi.useRealTimers();
+		}
+	});
+
+	it('finishes saving after a reader disconnect and clears its heartbeat', async () => {
+		vi.useFakeTimers();
+		let finish!: (value: ReturnType<typeof providerResponse>) => void;
+		vi.mocked(sentenceImportProvider.extract).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		const form = new FormData();
+		form.append('pdf', pdfFile());
+		const response = await POST({
+			request: new Request('http://localhost/app/s/import', { method: 'POST', body: form }),
+			locals: { userId }
+		} as never);
+		try {
+			await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+			await response.body!.cancel();
+			expect(vi.getTimerCount()).toBe(0);
+			finish(providerResponse());
+			await vi.waitFor(async () => expect(await listSentenceBooks(userId)).toHaveLength(1));
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('returns provider errors in the body and rejects unauthenticated requests', async () => {
+		vi.mocked(sentenceImportProvider.extract).mockRejectedValue(
+			new Error('PDF 분석 시간이 초과되었습니다.')
+		);
+		const form = new FormData();
+		form.append('pdf', pdfFile());
+		const request = new Request('http://localhost/app/s/import', { method: 'POST', body: form });
+		const unauthorized = await POST({ request: request.clone(), locals: {} } as never);
+		expect(unauthorized.status).toBe(401);
+		expect(sentenceImportProvider.extract).not.toHaveBeenCalled();
+		const response = await POST({ request, locals: { userId } } as never);
+		expect(await response.json()).toEqual({ message: 'PDF 분석 시간이 초과되었습니다.' });
 		expect(await listSentenceBooks(userId)).toEqual([]);
 	});
 });

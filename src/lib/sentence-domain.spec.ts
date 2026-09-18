@@ -1,6 +1,8 @@
 import {
 	SentenceImportResponseSchema,
 	SentencePassageSchema,
+	editMemorizationText,
+	spliceMemorizationRuns,
 	combineTranslations,
 	defaultTitleFromFileName,
 	gradeSentenceAnswer,
@@ -11,6 +13,33 @@ import {
 	passagePlainText
 } from './sentence-domain';
 import { describe, expect, it } from 'vitest';
+
+it('edits exact memorization ranges and restores omitted text without losing surrounding text', () => {
+	const runs = [
+		{ text: 'Before. ', memorize: false },
+		{ text: 'Keep this!', memorize: true },
+		{ text: ' After.', memorize: false }
+	];
+	const text = runs.map((run) => run.text).join('');
+	const restored = editMemorizationText(runs, 'Missing sentence. ' + text);
+	expect(restored).toEqual([
+		{ text: 'Missing sentence. Before. ', memorize: false },
+		...runs.slice(1)
+	]);
+	const marked = spliceMemorizationRuns(runs, 4, 13, [{ text: text.slice(4, 13), memorize: true }]);
+	expect(marked.map((run) => run.text).join('')).toBe(text);
+	expect(marked[0]).toEqual({ text: 'Befo', memorize: false });
+	const cleared = spliceMemorizationRuns(marked, 0, text.length, [{ text, memorize: false }]);
+	expect(cleared).toEqual([{ text, memorize: false }]);
+	expect(editMemorizationText(runs, '')).toEqual([]);
+	expect(editMemorizationText(runs, 'Before. Keep this!')).toEqual(runs.slice(0, 2));
+	expect(
+		editMemorizationText(runs, 'Before. Keep NEW this! After.')
+			.filter((run) => run.memorize)
+			.map((run) => run.text)
+	).toEqual(['Keep ', 'this!']);
+	expect(runs.map((run) => run.text).join('')).toBe(text);
+});
 
 const importResponse = {
 	passages: [

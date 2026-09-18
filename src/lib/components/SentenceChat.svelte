@@ -82,7 +82,7 @@
 			<header class="sentence-chat-header">
 				<div>
 					<h2>지문에 질문하기</h2>
-					<p>{passage.label} · 이 지문 안에서만 답변해요</p>
+					<p>{passage.label} · 단어 뜻부터 문장 분석까지</p>
 				</div>
 				<button class="sentence-chat-close" type="button" aria-label="채팅 닫기" onclick={toggle}>
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
@@ -92,7 +92,8 @@
 			<div class="sentence-chat-messages" bind:this={messageList} role="log" aria-live="polite">
 				{#if messages.length === 0}
 					<p class="sentence-chat-empty">
-						표현의 의미, 글의 흐름, 문법처럼 현재 지문에서 확인할 수 있는 내용을 물어보세요.
+						단어 뜻, 문법, 해석을 물어보거나 내가 분석한 문장이 맞는지 확인해 보세요. 지문 밖의
+						표현도 질문할 수 있어요.
 					</p>
 				{/if}
 				{#each messages as message, index (index)}
@@ -111,7 +112,7 @@
 					bind:value={question}
 					rows="2"
 					maxlength="2000"
-					placeholder="이 지문에 대해 질문하세요"
+					placeholder="단어 뜻이나 문장 분석을 물어보세요"
 					disabled={pending}
 					onkeydown={handleComposerKeydown}></textarea>
 				<button class="button button-primary" type="submit" disabled={pending || !question.trim()}

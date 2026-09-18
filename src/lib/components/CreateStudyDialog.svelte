@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
@@ -67,38 +67,69 @@
 	}
 
 	function closeCreate() {
+		if (importPending || createPending) return;
 		if (dialog?.open) dialog.close();
 		if (createParam === '1') {
 			void goto(basePath, { replaceState: true, keepFocus: true });
 		}
 	}
 
-	const enhanceCreate: SubmitFunction = () => {
+	beforeNavigate(({ cancel }) => {
+		if (importPending || createPending) cancel();
+	});
+
+	function warnBeforeUnload(event: BeforeUnloadEvent) {
+		if (!importPending && !createPending) return;
+		event.preventDefault();
+		event.returnValue = '';
+	}
+
+	const enhanceCreate: SubmitFunction = ({ cancel }) => {
+		if (createPending) return cancel();
 		createPending = true;
 		vocabError = '';
-		return async ({ update }) => {
+		return async ({ update, result }) => {
+			createPending = false;
 			try {
-				await update();
-			} finally {
-				createPending = false;
+				if (result.type === 'failure') {
+					vocabError = String(result.data?.message ?? '단어장을 만들지 못했습니다.');
+				} else if (result.type === 'error') {
+					vocabError = '서버 응답을 확인하지 못했습니다. 목록을 확인한 후 다시 시도해 주세요.';
+				} else {
+					await update();
+				}
+			} catch {
+				vocabError = '결과를 표시하지 못했습니다. 목록을 새로고침해 주세요.';
 			}
-			vocabError = (page.form as { message?: string } | null)?.message ?? '';
 		};
 	};
 
-	const enhanceImport: SubmitFunction = () => {
+	const enhanceImport: SubmitFunction = async ({ cancel, formData }) => {
+		cancel();
+		if (importPending) return;
 		importPending = true;
 		importError = '';
-		return async ({ update }) => {
-			try {
-				await update();
-			} finally {
+		try {
+			const response = await fetch(resolve('/app/s/import'), { method: 'POST', body: formData });
+			const result = await response.json();
+			if (typeof result.message === 'string') {
+				importError = result.message;
+			} else if (response.ok && typeof result.location === 'string') {
 				importPending = false;
+				await goto(result.location, { invalidateAll: true });
+			} else {
+				throw new Error('Missing import result');
 			}
-			importError = (page.form as { message?: string } | null)?.message ?? '';
-		};
+		} catch {
+			importError =
+				'분석 연결이 끊겨 결과를 확인하지 못했습니다. 서버에 저장됐을 수 있으니 잠시 후 암기장 목록을 확인해 주세요.';
+		} finally {
+			importPending = false;
+		}
 	};
 </script>
+
+<svelte:window onbeforeunload={warnBeforeUnload} />
 
 <dialog
 	bind:this={dialog}

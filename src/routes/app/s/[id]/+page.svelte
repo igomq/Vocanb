@@ -9,9 +9,11 @@
 	import PassageTranslationView from '$lib/components/PassageTranslationView.svelte';
 	import SentenceTest from '$lib/components/SentenceTest.svelte';
 	import SentenceChat from '$lib/components/SentenceChat.svelte';
+	import PassageEditor from '$lib/components/PassageEditor.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { page } from '$app/state';
 
 	let { data } = $props();
 
@@ -26,13 +28,21 @@
 	let renameTitle = $state('');
 	let renamePending = $state(false);
 	let renameError = $state('');
-	let savingResults = false;
+	let savingResults = $state(false);
+	let editing = $state(false);
+	let editNotice = $state('');
 	const pendingResultSaves = new SvelteMap<string, Record<string, SentenceTestResult>>();
-	let syncedBookId = '';
+	let syncedBookId = $state('');
 
 	$effect(() => {
 		if (syncedBookId === data.book.id) return;
 		syncedBookId = data.book.id;
+		editing = false;
+		editNotice = '';
+		const index = data.book.passages.findIndex(
+			(passage) => passage.id === page.url.searchParams.get('passage')
+		);
+		activeIndex = index < 0 ? 0 : index;
 		testResults = Object.fromEntries(
 			data.book.passages.map((passage) => [passage.id, passage.testResults])
 		);
@@ -79,7 +89,25 @@
 	function goTo(index: number) {
 		if (index < 0 || index >= passages.length) return;
 		activeIndex = index;
+		editNotice = '';
 		tab = 'passage';
+	}
+
+	function applyPassage(passage: SentencePassage) {
+		data = {
+			...data,
+			book: {
+				...data.book,
+				passages: data.book.passages.map((current) =>
+					current.id === passage.id ? passage : current
+				)
+			}
+		};
+		testResults = { ...testResults, [passage.id]: passage.testResults };
+		resultRevisions = { ...resultRevisions, [passage.id]: passage.testResultsRevision };
+		pendingResultSaves.delete(passage.id);
+		editing = false;
+		editNotice = '본문과 암기 범위를 저장했습니다.';
 	}
 
 	function switchTab(next: Tab) {
@@ -182,6 +210,18 @@
 		<section class="sentence-stage" aria-label="지문 학습">
 			<div class="sentence-stage-header">
 				<h2 class="sentence-passage-label">{activePassage.label}</h2>
+				{#if !editing}
+					<button
+						class="button button-secondary"
+						type="button"
+						disabled={syncedBookId !== data.book.id || savingResults || pendingResultSaves.size > 0}
+						onclick={() => {
+							editing = true;
+							tab = 'passage';
+							editNotice = '';
+						}}>본문·암기 범위 수정</button
+					>
+				{/if}
 				<span class="sentence-passage-position">
 					{activeIndex + 1} / {passages.length}
 				</span>
@@ -192,7 +232,7 @@
 					class="button button-secondary sentence-nav-arrow"
 					type="button"
 					onclick={() => goTo(activeIndex - 1)}
-					disabled={!nav.canPrevious}>‹ 이전</button
+					disabled={editing || !nav.canPrevious}>‹ 이전</button
 				>
 				<div class="sentence-tabs" role="tablist" aria-label="보기 모드">
 					<button
@@ -201,6 +241,7 @@
 						type="button"
 						role="tab"
 						aria-selected={tab === 'summary'}
+						disabled={editing}
 						onclick={() => switchTab('summary')}>정리</button
 					>
 					<button
@@ -209,6 +250,7 @@
 						type="button"
 						role="tab"
 						aria-selected={tab === 'passage'}
+						disabled={editing}
 						onclick={() => switchTab('passage')}>본문</button
 					>
 					<button
@@ -217,6 +259,7 @@
 						type="button"
 						role="tab"
 						aria-selected={tab === 'test'}
+						disabled={editing}
 						onclick={() => switchTab('test')}>테스트</button
 					>
 					<button
@@ -225,6 +268,7 @@
 						type="button"
 						role="tab"
 						aria-selected={tab === 'translation'}
+						disabled={editing}
 						onclick={() => switchTab('translation')}>번역</button
 					>
 				</div>
@@ -232,12 +276,20 @@
 					class="button button-secondary sentence-nav-arrow"
 					type="button"
 					onclick={() => goTo(activeIndex + 1)}
-					disabled={!nav.canNext}>다음 ›</button
+					disabled={editing || !nav.canNext}>다음 ›</button
 				>
 			</nav>
 
 			<div class="sentence-panel">
-				{#if tab === 'summary'}
+				{#if editNotice}<p role="status">{editNotice}</p>{/if}
+				{#if editing}
+					<PassageEditor
+						bookId={data.book.id}
+						passage={activePassage}
+						onsave={applyPassage}
+						oncancel={() => (editing = false)}
+					/>
+				{:else if tab === 'summary'}
 					<PassageSummaryView bookId={data.book.id} passage={activePassage} />
 				{:else if tab === 'passage'}
 					<MemorizationPassage

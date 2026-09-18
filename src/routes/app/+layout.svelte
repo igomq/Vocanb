@@ -244,6 +244,20 @@
 						></span
 					>
 				</a>
+				<a
+					class:is-active={page.url.pathname === '/app/learn'}
+					class="sidebar-link"
+					href={resolve('/app/learn')}
+					onclick={closeDrawer}
+					aria-current={page.url.pathname === '/app/learn' ? 'page' : undefined}
+				>
+					<span class="sidebar-link-index">›</span>
+					<span class="sidebar-link-copy"
+						><span class="sidebar-link-title">추천 학습</span><span class="sidebar-link-range"
+							>오늘</span
+						></span
+					>
+				</a>
 
 				{#each vocabularyGroup.folders as folder (folder.id)}
 					{@const p = pageOf(folder.id, folder.itemIds)}

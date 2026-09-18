@@ -17,6 +17,7 @@ import {
 } from '$lib/domain';
 import { normalizeUpload } from '$lib/server/image';
 import { mapWithConcurrency, ocrProvider } from '$lib/server/ocr';
+import { getLearningSnapshot } from '$lib/server/learning-storage';
 import {
 	atomicCreate,
 	renameVocabulary,
@@ -35,6 +36,9 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const latest = latestCompletedTest(vocabulary);
 	const latestResults = latestCompletedResults(vocabulary);
 	const vocabularyView = { ...vocabulary, tests: undefined };
+	const sourceStats = await getLearningSnapshot(locals.userId!, params.id)
+		.then((snapshot) => snapshot.sourceStats)
+		.catch(() => []);
 	return {
 		vocabulary: vocabularyView,
 		latestResult: latestResults.size
@@ -44,7 +48,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 					results: Object.fromEntries(latestResults)
 				}
 			: null,
-		continuous: nextContinuousLearningStep(vocabulary)
+		continuous: nextContinuousLearningStep(vocabulary),
+		sourceStats
 	};
 };
 
