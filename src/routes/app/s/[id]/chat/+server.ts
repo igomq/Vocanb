@@ -28,6 +28,7 @@ function isChatMessages(value: unknown): value is ChatMessage[] {
 }
 
 export const POST = async ({ request, locals, params }) => {
+	if (!locals.userId) return json({ message: '로그인이 필요합니다.' }, { status: 401 });
 	const body: unknown = await request.json().catch(() => null);
 	const passageId = isRecord(body) && typeof body.passageId === 'string' ? body.passageId : '';
 	const messages = isRecord(body) && isChatMessages(body.messages) ? body.messages : null;
@@ -39,6 +40,50 @@ export const POST = async ({ request, locals, params }) => {
 	if (!book) return json({ message: '문장 암기장을 찾을 수 없습니다.' }, { status: 404 });
 	const passage = book.passages.find((candidate) => candidate.id === passageId);
 	if (!passage) return json({ message: '지문을 찾을 수 없습니다.' }, { status: 404 });
+
+	if (request.headers.get('accept')?.includes('application/x-ndjson')) {
+		const abort = new AbortController();
+		const signal = AbortSignal.any([request.signal, abort.signal]);
+		let cancelled = false;
+		let heartbeat: ReturnType<typeof setInterval>;
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				const encoder = new TextEncoder();
+				const send = (event?: object) => {
+					if (!cancelled && !signal.aborted)
+						controller.enqueue(encoder.encode((event ? JSON.stringify(event) : '') + '\n'));
+				};
+				send();
+				heartbeat = setInterval(send, 15_000);
+				void generatePassageChatAnswer(passagePlainText(passage), messages, {
+					signal,
+					onDelta: (text) => send({ type: 'delta', text })
+				})
+					.then(() => send({ type: 'done' }))
+					.catch((error) => {
+						if (signal.aborted) return;
+						console.error('Passage chat stream failed:', error);
+						send({ type: 'error', message: '답변을 생성하지 못했습니다. 다시 질문해 주세요.' });
+					})
+					.finally(() => {
+						clearInterval(heartbeat);
+						if (!cancelled) controller.close();
+					});
+			},
+			cancel() {
+				cancelled = true;
+				clearInterval(heartbeat);
+				abort.abort();
+			}
+		});
+		return new Response(body, {
+			headers: {
+				'Content-Type': 'application/x-ndjson; charset=utf-8',
+				'Cache-Control': 'no-store, no-transform',
+				'X-Accel-Buffering': 'no'
+			}
+		});
+	}
 
 	try {
 		return json({ answer: await generatePassageChatAnswer(passagePlainText(passage), messages) });

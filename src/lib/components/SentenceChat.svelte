@@ -1,26 +1,33 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import type { SentencePassage } from '$lib/sentence-domain';
+	import { chatHistory, readChatStream, type ChatMessage } from '$lib/chat-stream';
+	import { renderChatMarkdown } from '$lib/chat-markdown';
 
 	let { bookId, passage }: { bookId: string; passage: SentencePassage } = $props();
 
-	type Message = { role: 'user' | 'assistant'; content: string };
 	let open = $state(false);
 	let question = $state('');
 	let pending = $state(false);
 	let error = $state('');
-	let messages = $state<Message[]>([]);
+	let messages = $state<ChatMessage[]>([]);
 	let composer: HTMLTextAreaElement | undefined = $state();
 	let messageList: HTMLDivElement | undefined = $state();
-	let syncedPassageId = '';
+	let syncedContext = '';
+	let activeRequest: AbortController | undefined;
+	const context = $derived(`${bookId}:${passage.id}:${JSON.stringify(passage.paragraphs)}`);
 
 	$effect(() => {
-		if (syncedPassageId === passage.id) return;
-		syncedPassageId = passage.id;
+		if (syncedContext === context) return;
+		syncedContext = context;
+		activeRequest?.abort();
+		activeRequest = undefined;
+		pending = false;
 		question = '';
 		error = '';
 		messages = [];
 	});
+	onDestroy(() => activeRequest?.abort());
 
 	async function toggle() {
 		open = !open;
@@ -35,8 +42,13 @@
 		const content = question.trim();
 		if (!content || pending) return;
 		const passageId = passage.id;
-		const nextMessages = [...messages, { role: 'user' as const, content }].slice(-20);
-		messages = nextMessages;
+		const nextMessages = [
+			...messages.filter((message) => message.content),
+			{ role: 'user' as const, content }
+		].slice(-20);
+		const request = new AbortController();
+		activeRequest = request;
+		messages = [...nextMessages, { role: 'assistant', content: '' }];
 		question = '';
 		error = '';
 		pending = true;
@@ -44,26 +56,37 @@
 		try {
 			const response = await fetch(`/app/s/${bookId}/chat`, {
 				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ passageId, messages: nextMessages })
+				headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
+				body: JSON.stringify({ passageId, messages: chatHistory(nextMessages) }),
+				signal: request.signal
 			});
-			const body = await response.json().catch(() => null);
-			if (!response.ok || typeof body?.answer !== 'string')
-				throw new Error(body?.message || '답변을 받지 못했습니다.');
-			if (passage.id !== passageId) return;
-			messages = [...messages, { role: 'assistant', content: body.answer }];
+			for await (const delta of readChatStream(response)) {
+				if (activeRequest !== request || request.signal.aborted) return;
+				const follow =
+					!messageList ||
+					messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight < 80;
+				messages[nextMessages.length].content += delta;
+				if (follow) await scrollToLatest();
+			}
 		} catch (failure) {
-			if (passage.id === passageId)
+			if (activeRequest === request && !request.signal.aborted) {
 				error = failure instanceof Error ? failure.message : '답변을 받지 못했습니다.';
+				if (!messages.at(-1)?.content) {
+					messages = nextMessages.slice(0, -1);
+					question = content;
+				}
+			}
 		} finally {
-			pending = false;
-			await scrollToLatest();
+			if (activeRequest === request) {
+				activeRequest = undefined;
+				pending = false;
+			}
 		}
 	}
 
 	async function scrollToLatest() {
 		await tick();
-		messageList?.scrollTo({ top: messageList.scrollHeight, behavior: 'smooth' });
+		messageList?.scrollTo({ top: messageList.scrollHeight, behavior: 'instant' });
 	}
 
 	function handleComposerKeydown(event: KeyboardEvent) {
@@ -89,7 +112,13 @@
 				</button>
 			</header>
 
-			<div class="sentence-chat-messages" bind:this={messageList} role="log" aria-live="polite">
+			<div
+				class="sentence-chat-messages"
+				bind:this={messageList}
+				role="log"
+				aria-live="polite"
+				aria-busy={pending}
+			>
 				{#if messages.length === 0}
 					<p class="sentence-chat-empty">
 						단어 뜻, 문법, 해석을 물어보거나 내가 분석한 문장이 맞는지 확인해 보세요. 지문 밖의
@@ -97,11 +126,21 @@
 					</p>
 				{/if}
 				{#each messages as message, index (index)}
-					<p class:from-user={message.role === 'user'} class="sentence-chat-message">
-						{message.content}
-					</p>
+					{#if message.content}
+						<div class:from-user={message.role === 'user'} class="sentence-chat-message">
+							{#if message.role === 'assistant'}
+								<div class="sentence-chat-markdown">
+									<!-- Raw HTML and unsafe links are disabled by the Markdown renderer. -->
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+									{@html renderChatMarkdown(message.content)}
+								</div>
+							{:else}{message.content}{/if}
+						</div>
+					{/if}
 				{/each}
-				{#if pending}<p class="sentence-chat-thinking">답변을 확인하고 있어요…</p>{/if}
+				{#if pending}<p class="sentence-chat-thinking">
+						{messages.at(-1)?.content ? '답변 작성 중…' : '답변을 확인하고 있어요…'}
+					</p>{/if}
 			</div>
 
 			<form class="sentence-chat-composer" onsubmit={ask}>

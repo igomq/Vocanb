@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }));
+const { generateContent, generateContentStream } = vi.hoisted(() => ({
+	generateContent: vi.fn(),
+	generateContentStream: vi.fn()
+}));
 vi.mock('@google/genai', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@google/genai')>()),
 	GoogleGenAI: class {
-		models = { generateContent };
+		models = { generateContent, generateContentStream };
 	}
 }));
 vi.mock('./config', () => ({
@@ -32,11 +35,50 @@ const imported = {
 beforeEach(() => {
 	vi.useFakeTimers();
 	generateContent.mockReset();
+	generateContentStream.mockReset();
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 afterEach(() => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
+});
+
+it('forwards streaming chunks without trimming Markdown whitespace', async () => {
+	generateContentStream.mockResolvedValue(
+		(async function* () {
+			yield { text: '**뜻**\n' };
+			yield { text: '\n- 예문' };
+		})()
+	);
+	const onDelta = vi.fn();
+	expect(
+		await generatePassageChatAnswer('Passage', [{ role: 'user', content: '설명' }], {
+			onDelta,
+			signal: new AbortController().signal
+		})
+	).toBe('**뜻**\n\n- 예문');
+	expect(onDelta.mock.calls.map(([text]) => text)).toEqual(['**뜻**\n', '\n- 예문']);
+	expect(generateContentStream.mock.calls[0][0].config.httpOptions.retryOptions.attempts).toBe(1);
+	expect(generateContent).not.toHaveBeenCalled();
+});
+
+it('stops a cancelled stream and never retries after emitting text', async () => {
+	const abort = new AbortController();
+	generateContentStream.mockResolvedValue(
+		(async function* () {
+			yield { text: 'first' };
+			yield { text: 'stale' };
+		})()
+	);
+	const onDelta = vi.fn(() => abort.abort());
+	await expect(
+		generatePassageChatAnswer('Passage', [{ role: 'user', content: '설명' }], {
+			onDelta,
+			signal: abort.signal
+		})
+	).rejects.toMatchObject({ cause: { name: 'AbortError' } });
+	expect(onDelta).toHaveBeenCalledTimes(1);
+	expect(generateContentStream).toHaveBeenCalledTimes(1);
 });
 
 it('sends vocabulary and analysis follow-ups with a tutoring policy instead of passage-only refusal', async () => {

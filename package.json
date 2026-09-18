@@ -47,6 +47,7 @@
 	},
 	"dependencies": {
 		"@google/genai": "^2.16.0",
+		"markdown-it": "^15.0.2",
 		"sharp": "^0.35.3",
 		"zod": "^4.4.3"
 	}
